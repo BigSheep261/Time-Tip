@@ -6,8 +6,8 @@ from pathlib import Path
 import tempfile
 import uuid
 
-from PyQt6.QtCore import QDate, Qt, pyqtSignal
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtCore import QDate, QRect, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QComboBox,
     QDateEdit,
@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QVBoxLayout,
+    QWidget,
 )
 
 from app.domain.anime import CATEGORIES, WEEKDAY_NAMES, progress_number, validate_anime
@@ -30,43 +31,169 @@ from app.domain.anime import CATEGORIES, WEEKDAY_NAMES, progress_number, validat
 DEFAULT_ANIME_COVER = Path(__file__).resolve().parents[2] / "assets" / "anime-default-cover.png"
 
 
+class CoverCropCanvas(QWidget):
+    """Image canvas with a draggable, resizable crop rectangle."""
+
+    def __init__(self, source: QPixmap, parent=None):
+        super().__init__(parent)
+        self.source = source
+        self.selection = QRect(0, 0, max(1, source.width()), max(1, source.height()))
+        self._drag_mode = None
+        self._anchor = None
+        self._start_selection = None
+        self.setMinimumSize(360, 280)
+        self.setMouseTracking(True)
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+
+    def _image_rect(self):
+        if self.source.isNull():
+            return QRect()
+        scale = min(self.width() / self.source.width(), self.height() / self.source.height())
+        width = max(1, round(self.source.width() * scale))
+        height = max(1, round(self.source.height() * scale))
+        return QRect((self.width() - width) // 2, (self.height() - height) // 2, width, height)
+
+    def _view_selection(self):
+        image = self._image_rect()
+        if image.isNull():
+            return QRect()
+        sx, sy = image.width() / self.source.width(), image.height() / self.source.height()
+        return QRect(round(image.left() + self.selection.left() * sx), round(image.top() + self.selection.top() * sy),
+                     max(1, round(self.selection.width() * sx)), max(1, round(self.selection.height() * sy)))
+
+    def _source_point(self, point):
+        image = self._image_rect()
+        if image.isNull():
+            return None
+        x = round((point.x() - image.left()) * self.source.width() / image.width())
+        y = round((point.y() - image.top()) * self.source.height() / image.height())
+        return max(0, min(self.source.width(), x)), max(0, min(self.source.height(), y))
+
+    def _hit_test(self, point):
+        rect = self._view_selection()
+        if rect.isNull():
+            return None
+        margin = 9
+        near_left = abs(point.x() - rect.left()) <= margin
+        near_right = abs(point.x() - rect.right()) <= margin
+        near_top = abs(point.y() - rect.top()) <= margin
+        near_bottom = abs(point.y() - rect.bottom()) <= margin
+        if near_left and near_top: return "top-left"
+        if near_right and near_top: return "top-right"
+        if near_left and near_bottom: return "bottom-left"
+        if near_right and near_bottom: return "bottom-right"
+        if near_top and rect.left() <= point.x() <= rect.right(): return "top"
+        if near_bottom and rect.left() <= point.x() <= rect.right(): return "bottom"
+        if near_left and rect.top() <= point.y() <= rect.bottom(): return "left"
+        if near_right and rect.top() <= point.y() <= rect.bottom(): return "right"
+        if rect.contains(point): return "move"
+        return None
+
+    def _set_cursor(self, mode):
+        cursors = {"top-left": Qt.CursorShape.SizeFDiagCursor, "bottom-right": Qt.CursorShape.SizeFDiagCursor,
+                   "top-right": Qt.CursorShape.SizeBDiagCursor, "bottom-left": Qt.CursorShape.SizeBDiagCursor,
+                   "top": Qt.CursorShape.SizeVerCursor, "bottom": Qt.CursorShape.SizeVerCursor,
+                   "left": Qt.CursorShape.SizeHorCursor, "right": Qt.CursorShape.SizeHorCursor,
+                   "move": Qt.CursorShape.SizeAllCursor}
+        self.setCursor(cursors.get(mode, Qt.CursorShape.ArrowCursor))
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton or self.source.isNull():
+            return
+        self._drag_mode = self._hit_test(event.position().toPoint())
+        if self._drag_mode:
+            self._anchor = self._source_point(event.position().toPoint())
+            self._start_selection = QRect(self.selection)
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        point = event.position().toPoint()
+        if not self._drag_mode:
+            self._set_cursor(self._hit_test(point))
+            return
+        current = self._source_point(point)
+        if not current or not self._anchor or not self._start_selection:
+            return
+        dx, dy = current[0] - self._anchor[0], current[1] - self._anchor[1]
+        start = self._start_selection
+        minimum = min(16, max(1, min(self.source.width(), self.source.height())))
+        if self._drag_mode == "move":
+            x = max(0, min(self.source.width() - start.width(), start.x() + dx))
+            y = max(0, min(self.source.height() - start.height(), start.y() + dy))
+            self.selection = QRect(x, y, start.width(), start.height())
+        else:
+            left, top, right, bottom = start.left(), start.top(), start.right(), start.bottom()
+            if "left" in self._drag_mode: left = max(0, min(right - minimum + 1, start.left() + dx))
+            if "right" in self._drag_mode: right = min(self.source.width() - 1, max(left + minimum - 1, start.right() + dx))
+            if "top" in self._drag_mode: top = max(0, min(bottom - minimum + 1, start.top() + dy))
+            if "bottom" in self._drag_mode: bottom = min(self.source.height() - 1, max(top + minimum - 1, start.bottom() + dy))
+            self.selection = QRect(left, top, right - left + 1, bottom - top + 1)
+        self.update()
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._drag_mode = self._anchor = self._start_selection = None
+        self._set_cursor(self._hit_test(event.position().toPoint()))
+        event.accept()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor("#151827"))
+        if self.source.isNull():
+            painter.end(); return
+        image = self._image_rect()
+        painter.drawPixmap(image, self.source)
+        selected = self._view_selection()
+        overlay = QColor(8, 10, 18, 165)
+        for outside in (QRect(image.left(), image.top(), image.width(), max(0, selected.top() - image.top())),
+                        QRect(image.left(), selected.bottom() + 1, image.width(), max(0, image.bottom() - selected.bottom())),
+                        QRect(image.left(), selected.top(), max(0, selected.left() - image.left()), selected.height()),
+                        QRect(selected.right() + 1, selected.top(), max(0, image.right() - selected.right()), selected.height())):
+            if outside.width() > 0 and outside.height() > 0: painter.fillRect(outside, overlay)
+        accent = self.palette().color(self.palette().ColorRole.Highlight)
+        painter.setPen(QPen(accent, 2)); painter.drawRect(selected)
+        painter.setPen(QPen(QColor("#ffffff"), 2))
+        handles = [(selected.left(), selected.top()), (selected.center().x(), selected.top()), (selected.right(), selected.top()),
+                   (selected.left(), selected.center().y()), (selected.right(), selected.center().y()),
+                   (selected.left(), selected.bottom()), (selected.center().x(), selected.bottom()), (selected.right(), selected.bottom())]
+        for x, y in handles: painter.drawRect(x - 4, y - 4, 8, 8)
+        painter.end()
+
+    def reset(self):
+        self.selection = QRect(0, 0, self.source.width(), self.source.height())
+        self.update()
+
+    def cropped_pixmap(self):
+        return self.source.copy(self.selection) if not self.source.isNull() else QPixmap()
+
+
 class CoverCropDialog(QDialog):
-    """Small manual crop tool for uploaded covers."""
+    """Visual crop tool for uploaded covers."""
 
     def __init__(self, source: str, parent=None):
         super().__init__(parent)
         self.setObjectName("animeDialog")
         self.setModal(True)
         self.setWindowTitle("裁剪封面")
+        self.setMinimumSize(480, 430)
+        self.resize(680, 560)
         self.source = QPixmap(source)
         self.cropped = None
         outer = QVBoxLayout(self); outer.setContentsMargins(20, 18, 20, 18); outer.setSpacing(12)
-        outer.addWidget(QLabel("调整裁剪区域，保存后会作为番剧封面。", objectName="animeDialogHint"))
-        self.preview = QLabel(objectName="animeDialogCover"); self.preview.setFixedSize(220, 220); self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter); outer.addWidget(self.preview, 0, Qt.AlignmentFlag.AlignCenter)
-        form = QFormLayout(); self.crop_x = QSpinBox(); self.crop_y = QSpinBox(); self.crop_width = QSpinBox(); self.crop_height = QSpinBox()
-        for field in (self.crop_x, self.crop_y, self.crop_width, self.crop_height): field.setRange(0, 10000)
-        self.crop_width.setValue(self.source.width()); self.crop_height.setValue(self.source.height()); self.crop_x.setValue(0); self.crop_y.setValue(0)
-        form.addRow("左边距", self.crop_x); form.addRow("上边距", self.crop_y); form.addRow("裁剪宽度", self.crop_width); form.addRow("裁剪高度", self.crop_height); outer.addLayout(form)
-        for field in (self.crop_x, self.crop_y, self.crop_width, self.crop_height): field.valueChanged.connect(self._render)
+        outer.addWidget(QLabel("拖动选框边缘或四角调整范围，拖动选框内部移动位置。", objectName="animeDialogHint"))
+        self.canvas = CoverCropCanvas(self.source, self)
+        outer.addWidget(self.canvas, 1)
+        action_row = QHBoxLayout(); action_row.setSpacing(8)
+        reset = QPushButton("重置选框", objectName="secondaryButton"); reset.clicked.connect(self.canvas.reset); action_row.addWidget(reset); action_row.addStretch(1)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.button(QDialogButtonBox.StandardButton.Save).setObjectName("primaryButton"); buttons.button(QDialogButtonBox.StandardButton.Save).setText("使用此封面")
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setObjectName("secondaryButton"); buttons.rejected.connect(self.reject); buttons.accepted.connect(self._accept); outer.addWidget(buttons)
-        self._render()
-
-    def _rect(self):
-        x = min(max(self.crop_x.value(), 0), max(self.source.width() - 1, 0))
-        y = min(max(self.crop_y.value(), 0), max(self.source.height() - 1, 0))
-        w = max(1, min(self.crop_width.value(), self.source.width() - x))
-        h = max(1, min(self.crop_height.value(), self.source.height() - y))
-        return x, y, w, h
-
-    def _render(self):
-        if self.source.isNull(): return
-        rect = self._rect(); cropped = self.source.copy(*rect)
-        self.preview.setPixmap(cropped.scaled(self.preview.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setObjectName("secondaryButton"); buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消"); buttons.rejected.connect(self.reject); buttons.accepted.connect(self._accept); action_row.addWidget(buttons); outer.addLayout(action_row)
+        if self.source.isNull():
+            buttons.button(QDialogButtonBox.StandardButton.Save).setEnabled(False)
+            outer.insertWidget(1, QLabel("无法读取这张图片，请重新选择封面。", objectName="animeDialogHint"))
 
     def _accept(self):
-        self.cropped = self.source.copy(*self._rect()); self.accept()
+        self.cropped = self.canvas.cropped_pixmap(); self.accept()
 
 
 class AnimeDialog(QDialog):
