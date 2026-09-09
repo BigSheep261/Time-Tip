@@ -1,11 +1,11 @@
 """Shared application theme."""
 APP_NAME = "TimeTip"
-PRIMARY = "#6857E8"
-TEXT = "#20212A"
-MUTED = "#686D80"
+PRIMARY = "#5E5CE6"
+TEXT = "#1D1D1F"
+MUTED = "#6E6E73"
 SURFACE = "#FFFFFF"
-BACKGROUND = "#F4F6FB"
-BORDER = "#E7E9F2"
+BACKGROUND = "#F5F5F7"
+BORDER = "#E5E5EA"
 
 
 STYLESHEET = f"""
@@ -81,5 +81,4 @@ QMenu::item:selected {{ background: #ECE9FF; color: {PRIMARY}; }}
 #widgetCard[tone="purple"] #widgetMenu {{ background: rgba(255,255,255,0.20); }}
 #widgetMenu:hover {{ background: #DCD7FF; }}
 """
-
 

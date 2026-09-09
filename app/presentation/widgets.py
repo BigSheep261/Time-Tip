@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, Qt, pyqtSignal
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMenu, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
 from app.domain.layout import WIDGET_SIZES, pack_widgets
@@ -80,6 +80,13 @@ class DashboardTile(QFrame):
 
     def set_editing(self, editing):
         self.menu_button.setVisible(editing)
+
+    def update_spec(self, title, size, tone):
+        self.span = tuple(size)
+        self.setProperty("tone", tone)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.title_label.setText(title)
 
     def show_menu(self):
         menu = QMenu(self)
@@ -163,5 +170,4 @@ class Card(QFrame):
         super().__init__(parent)
         self.setObjectName(object_name)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-
 

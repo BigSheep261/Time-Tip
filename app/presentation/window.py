@@ -4,7 +4,7 @@ import uuid
 from pathlib import Path
 from datetime import datetime, timedelta
 
-from PyQt6.QtCore import QByteArray, QDate, QPoint, QTime, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QByteArray, QDate, QEasingCurve, QPoint, QPropertyAnimation, QTime, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap, QTextCharFormat
 from PyQt6.QtWidgets import (
     QApplication,
@@ -366,19 +366,25 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
         return sorted(specs, key=lambda spec: self._widget_state(spec[0], spec[2])["order"])
 
     def _rebuild_dashboard(self):
-        for tile in self.tiles.values():
-            tile.hide()
-            tile.deleteLater()
+        # Reuse existing tiles so reorder and resize operations animate in place.
+        previous = self.tiles
         self.tiles = {}
         for key, title, default_size, tone in self._ordered_specs():
             state = self._widget_state(key, default_size)
             if not state["visible"]:
                 continue
-            tile = DashboardTile(key, title, tuple(state["size"]), tone)
-            tile.changed.connect(self._change_widget)
-            tile.opened.connect(self._open_widget)
+            tile = previous.pop(key, None)
+            if tile is None:
+                tile = DashboardTile(key, title, tuple(state["size"]), tone)
+                tile.changed.connect(self._change_widget)
+                tile.opened.connect(self._open_widget)
+            else:
+                tile.update_spec(title, tuple(state["size"]), tone)
             tile.set_editing(self.edit_layout_button.isChecked())
             self.tiles[key] = tile
+        for tile in previous.values():
+            tile.hide()
+            tile.deleteLater()
         self.grid.set_tiles(list(self.tiles.values()))
         self._render_dashboard(datetime.now())
 
@@ -959,7 +965,24 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
                 return
 
     def _switch_page(self, index: int) -> None:
+        current = self.pages.currentIndex()
+        if index == current:
+            return
+        direction = 1 if index > current else -1
         self.pages.setCurrentIndex(index)
+        page = self.pages.currentWidget()
+        if page is not None:
+            if hasattr(self, "_page_animation"):
+                self._page_animation.stop()
+            page.raise_()
+            page.move(self.pages.width() * direction, 0)
+            animation = QPropertyAnimation(page, b"pos", self)
+            animation.setDuration(240)
+            animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+            animation.setStartValue(page.pos())
+            animation.setEndValue(QPoint(0, 0))
+            self._page_animation = animation
+            animation.start()
         for i, button in enumerate(self.nav_buttons):
             button.setChecked(i == index)
         if index == 1:
@@ -1183,6 +1206,3 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
                 style.setFontWeight(QFont.Weight.Bold)
                 style.setToolTip("有番剧更新：" + anime["title"])
                 self.calendar.setDateTextFormat(qday, style)
-
-
-
