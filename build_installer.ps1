@@ -5,9 +5,14 @@ $originalPath = $env:PATH
 $originalDebug = $env:TIMETIP_DEBUG_BUILD
 try {
     if (-not $PythonExe) {
-        $venvPython = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
-        if (Test-Path -LiteralPath $venvPython) { $PythonExe = $venvPython }
-        else { $PythonExe = (Get-Command python -ErrorAction Stop).Source }
+        # Prefer the project-managed environments. A system Python may exist
+        # but still miss the Qt/PyInstaller build dependencies.
+        $pythonCandidates = @(
+            (Join-Path $PSScriptRoot '.conda-build\python.exe'),
+            (Join-Path $PSScriptRoot '.venv\Scripts\python.exe')
+        )
+        $PythonExe = $pythonCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+        if (-not $PythonExe) { $PythonExe = (Get-Command python -ErrorAction Stop).Source }
     }
     # Normalize relative paths before deriving the Conda layout.
     $PythonExe = (Resolve-Path -LiteralPath $PythonExe).Path
@@ -18,7 +23,9 @@ try {
     # fail before the Qt event loop starts.
     $condaLibraryBin = Join-Path $pythonDir 'Library\bin'
     & $PythonExe -c "import PyQt6, PyInstaller"
-    if ($LASTEXITCODE -ne 0) { throw 'Install build dependencies first: python -m pip install -r requirements-dev.txt' }
+    if ($LASTEXITCODE -ne 0) {
+        throw "构建环境缺少 PyQt6 或 PyInstaller（当前 Python：$PythonExe）。请运行：$PythonExe -m pip install -r requirements-dev.txt"
+    }
     & $PythonExe -m unittest discover -s tests -q
     if ($LASTEXITCODE -ne 0) { throw 'Tests failed; no package was produced.' }
     # Prevent unrelated tools on PATH from contributing incompatible Qt DLLs.
