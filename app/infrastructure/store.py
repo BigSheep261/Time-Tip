@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import zipfile
 import uuid
+import shutil
+from pathlib import Path
 from datetime import date, datetime, timedelta
 from app.domain.countdowns import validate_cycle
 from app.domain.anime import validate_anime
@@ -63,7 +65,7 @@ class Store:
         if self._backend:
             self._backend.export_data(path); return
         payload = {"version": 2, "settings": {}, "collections": {}}
-        for key in ("work", "break", "salary", "widgets", "window_geometry", "date_format", "target", "target_notified", "memo"):
+        for key in ("work", "break", "salary", "widgets", "window_geometry", "date_format", "theme", "target", "target_notified", "memo"):
             payload["settings"][key] = self.get(key, "")
         for key in ("countdowns", "memos", "reminders", "anime"):
             payload["collections"][key] = self.read_json(key, [])
@@ -80,13 +82,24 @@ class Store:
         if not isinstance(payload, dict) or not isinstance(payload.get("settings"), dict) or not isinstance(payload.get("collections"), dict):
             raise ValueError("数据文件格式不受支持。")
         for key, value in payload["settings"].items():
-            if key in ("work", "break", "salary", "widgets", "window_geometry", "date_format", "target", "target_notified", "memo"): self.set(key, value)
+            if key in ("work", "break", "salary", "widgets", "window_geometry", "date_format", "theme", "target", "target_notified", "memo"): self.set(key, value)
         for key, value in payload["collections"].items():
             if key in ("countdowns", "memos", "reminders", "anime"): self.write_json(key, value)
 
     def save_anime(self, items: list[dict]) -> None:
         if self._backend: self._backend.save_anime(items); return
         self.write_json("anime", items)
+
+    def save_cover(self, source: str, item_id: str) -> str:
+        if self._backend: return self._backend.save_cover(source, item_id)
+        source_path = Path(source)
+        if not source_path.is_file(): return ""
+        cover_dir = Path(self.settings.fileName()).resolve().parent / "covers"
+        cover_dir.mkdir(parents=True, exist_ok=True)
+        destination = cover_dir / (item_id + source_path.suffix.lower())
+        if source_path.resolve() != destination.resolve():
+            shutil.copyfile(source_path, destination)
+        return str(destination)
 
     def read_json(self, key, default):
         if self._backend: return self._backend.read_json(key, default)

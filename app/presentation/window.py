@@ -1,21 +1,26 @@
 from __future__ import annotations
 
 import uuid
+import os
+import re
 from pathlib import Path
 from datetime import datetime, timedelta
 
-from PyQt6.QtCore import QByteArray, QDate, QEasingCurve, QPoint, QPropertyAnimation, QTime, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPixmap, QTextCharFormat
+from PyQt6.QtCore import QByteArray, QDate, QEasingCurve, QPoint, QPropertyAnimation, QSize, QTime, Qt, QTimer, pyqtProperty, pyqtSignal
+from PyQt6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPainterPath, QPixmap, QTextCharFormat
 from PyQt6.QtWidgets import (
     QApplication,
+    QAbstractButton,
     QBoxLayout,
     QCalendarWidget,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QFrame,
+    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QGridLayout,
     QLabel,
@@ -48,7 +53,8 @@ from app.presentation.countdowns import CountdownPageMixin
 from app.presentation.widgets import Card, DashboardTile, ResizeHandle, WidgetGrid
 from app.infrastructure.store import Store
 from app.infrastructure import startup
-from app.presentation.theme import APP_NAME, PRIMARY
+from app.presentation.theme import (APP_NAME, PRIMARY, apply_theme, available_themes,
+                                     get_theme, set_feedback_state)
 
 
 def make_app_icon() -> QIcon:
@@ -66,6 +72,82 @@ def make_app_icon() -> QIcon:
     return QIcon(pix)
 
 
+class ThemeLogo(QAbstractButton):
+    """Animated theme-aware logo used by the title bar."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(40, 40)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("连续点击三次切换日间 / 夜间模式")
+        self.setAccessibleName("主题切换 Logo")
+        self._theme = get_theme("light")
+        self._pulse = 1.0
+        self._rotation = 0.0
+        self._animation = None
+
+    @pyqtProperty(float)
+    def pulse(self):
+        return self._pulse
+
+    @pulse.setter
+    def pulse(self, value):
+        self._pulse = float(value)
+        self.update()
+
+    @pyqtProperty(float)
+    def rotation(self):
+        return self._rotation
+
+    @rotation.setter
+    def rotation(self, value):
+        self._rotation = float(value)
+        self.update()
+
+    def set_theme(self, theme):
+        self._theme = theme
+        self._pulse = 1.0
+        self._start_animation()
+        self.update()
+
+    def _start_animation(self):
+        from PyQt6.QtCore import QParallelAnimationGroup
+        if self._animation is not None:
+            self._animation.stop()
+        group = QParallelAnimationGroup(self)
+        pulse = QPropertyAnimation(self, b"pulse", group)
+        pulse.setDuration(460); pulse.setStartValue(1.0); pulse.setKeyValueAt(0.45, 1.16); pulse.setEndValue(1.0)
+        pulse.setEasingCurve(QEasingCurve.Type.OutBack)
+        rotate = QPropertyAnimation(self, b"rotation", group)
+        # A full turn keeps the familiar T upright when the motion settles.
+        rotate.setDuration(520); rotate.setStartValue(self._rotation); rotate.setEndValue(self._rotation + 360)
+        rotate.setEasingCurve(QEasingCurve.Type.OutCubic)
+        group.addAnimation(pulse); group.addAnimation(rotate)
+        self._animation = group
+        group.start()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        size = 34 * self._pulse
+        painter.translate(int(self.width() / 2), int(self.height() / 2))
+        painter.rotate(self._rotation)
+        painter.translate(int(-size / 2), int(-size / 2))
+        primary = QColor(self._theme.colors["primary_button"])
+        painter.setPen(Qt.PenStyle.NoPen); painter.setBrush(primary)
+        painter.drawRoundedRect(0, 0, int(size), int(size), 11, 11)
+        painter.setPen(QColor(self._theme.colors["on_primary"]))
+        painter.setFont(QFont("Arial", max(15, round(21 * self._pulse)), QFont.Weight.Bold))
+        painter.drawText(0, 0, int(size), int(size), Qt.AlignmentFlag.AlignCenter, "T")
+        # A small sun/moon badge makes the state legible even while the animation rests.
+        badge = QColor(self._theme.colors["on_primary"])
+        painter.setPen(Qt.PenStyle.NoPen); painter.setBrush(badge)
+        painter.drawEllipse(int(size - 11), 3, 8, 8)
+        if self._theme.is_dark:
+            painter.setBrush(primary)
+            painter.drawEllipse(int(size - 8), 2, 8, 8)
+        painter.end()
+
+
 class TitleBar(QFrame):
     moved = pyqtSignal(QPoint)
 
@@ -77,11 +159,14 @@ class TitleBar(QFrame):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(24, 10, 18, 8)
         layout.setSpacing(10)
-        logo = QLabel("T")
-        logo.setObjectName("logo")
-        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        logo.setFixedSize(34, 34)
-        layout.addWidget(logo)
+        self.logo = ThemeLogo()
+        self._logo_clicks = 0
+        self._logo_timer = QTimer(self)
+        self._logo_timer.setSingleShot(True)
+        self._logo_timer.setInterval(650)
+        self._logo_timer.timeout.connect(self._reset_logo_clicks)
+        self.logo.clicked.connect(self._logo_clicked)
+        layout.addWidget(self.logo)
         title_box = QVBoxLayout()
         title_box.setSpacing(0)
         title = QLabel(APP_NAME)
@@ -100,6 +185,20 @@ class TitleBar(QFrame):
             button.setFixedSize(34, 34)
             button.clicked.connect(slot)
             layout.addWidget(button)
+
+    def _reset_logo_clicks(self):
+        self._logo_clicks = 0
+
+    def _logo_clicked(self):
+        self._logo_clicks += 1
+        if self._logo_clicks >= 3:
+            self._reset_logo_clicks()
+            self.window.toggle_theme()
+        else:
+            self._logo_timer.start()
+
+    def set_theme(self, theme):
+        self.logo.set_theme(theme)
 
     def mousePressEvent(self, event) -> None:  # type: ignore[override]
         if event.button() == Qt.MouseButton.LeftButton:
@@ -122,12 +221,15 @@ class TitleBar(QFrame):
 class AnimeCard(QFrame):
     """A compact poster card used by the anime reminder list."""
 
+    opened = pyqtSignal()
+
     def __init__(self, item: dict, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("animeCard")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setMinimumHeight(150)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setMouseTracking(True)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 12, 16, 12)
         layout.setSpacing(14)
@@ -162,9 +264,56 @@ class AnimeCard(QFrame):
         except (TypeError, ValueError):
             total = 12
         details.addWidget(QLabel(f"{progress_text} / 共 {total} 集", objectName="animeCardMeta"))
-        details.addWidget(QLabel(f"{anime_days_text(item)} · {item.get('start_date', '')} 起", objectName="animeCardMeta"))
+        schedule_text = "本地补番清单" if item.get("category") == "backlog" else f"{anime_days_text(item)} · {item.get('start_date', '')} 起"
+        details.addWidget(QLabel(schedule_text, objectName="animeCardMeta"))
         details.addStretch()
         layout.addLayout(details, 1)
+
+        self.actions_host = QFrame()
+        self.actions_host.setObjectName("animeCardActions")
+        self.actions_host.setMinimumWidth(0)
+        self.actions_host.setMaximumWidth(0)
+        self.actions_host.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+        actions = QVBoxLayout(self.actions_host)
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(6)
+        actions.addStretch()
+        self.edit_button = QPushButton("编辑", objectName="animeEditButton")
+        self.delete_button = QPushButton("删除", objectName="animeDeleteButton")
+        self.edit_button.setFixedWidth(58)
+        self.delete_button.setFixedWidth(58)
+        actions.addWidget(self.edit_button)
+        actions.addWidget(self.delete_button)
+        actions.addStretch()
+        layout.addWidget(self.actions_host)
+        self._action_animation = QPropertyAnimation(self.actions_host, b"maximumWidth", self)
+        self._action_animation.setDuration(180)
+        self._action_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+    def mouseMoveEvent(self, event):
+        if event.position().x() >= self.width() - 120:
+            self._set_actions_visible(True)
+        elif event.position().x() < self.width() - 145:
+            self._set_actions_visible(False)
+        super().mouseMoveEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.opened.emit()
+        super().mouseDoubleClickEvent(event)
+
+    def leaveEvent(self, event):
+        self._set_actions_visible(False)
+        super().leaveEvent(event)
+
+    def _set_actions_visible(self, visible):
+        target = 74 if visible else 0
+        if self.actions_host.maximumWidth() == target:
+            return
+        self._action_animation.stop()
+        self._action_animation.setStartValue(self.actions_host.maximumWidth())
+        self._action_animation.setEndValue(target)
+        self._action_animation.start()
 
     @staticmethod
     def _cover_pixmap(source: str) -> QPixmap:
@@ -187,10 +336,207 @@ class AnimeCard(QFrame):
         return result
 
 
+class MarqueeLabel(QLabel):
+    """Scroll long filenames only while the pointer is over the row."""
+
+    def __init__(self, text="", parent=None):
+        super().__init__(parent)
+        self._full_text = text
+        self._offset = 0
+        self._hovered = False
+        self._timer = QTimer(self)
+        self._timer.setInterval(36)
+        self._timer.timeout.connect(self._advance)
+        self.setText(text)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.setMinimumWidth(0)
+
+    def setText(self, text):
+        self._full_text = str(text)
+        self._offset = 0
+        super().setText(self._full_text)
+        self.update()
+
+    def enterEvent(self, event):
+        self._hovered = True
+        self._start_if_needed()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        self._timer.stop()
+        self._offset = 0
+        self.update()
+        super().leaveEvent(event)
+
+    def resizeEvent(self, event):
+        self._start_if_needed()
+        super().resizeEvent(event)
+
+    def _start_if_needed(self):
+        if self._hovered and QFontMetrics(self.font()).horizontalAdvance(self._full_text) > self.width():
+            self._timer.start()
+        else:
+            self._timer.stop()
+
+    def _advance(self):
+        text_width = QFontMetrics(self.font()).horizontalAdvance(self._full_text)
+        if text_width <= self.width():
+            self._timer.stop()
+            return
+        self._offset = (self._offset + 2) % (text_width + 42)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        painter.setClipRect(self.rect())
+        text_width = QFontMetrics(self.font()).horizontalAdvance(self._full_text)
+        x = 0 if text_width <= self.width() else -self._offset
+        painter.setPen(self.palette().color(self.foregroundRole()))
+        painter.drawText(x, 0, text_width, self.height(), Qt.AlignmentFlag.AlignVCenter, self._full_text)
+        if text_width > self.width() and self._offset > text_width:
+            painter.drawText(x + text_width + 42, 0, text_width, self.height(), Qt.AlignmentFlag.AlignVCenter, self._full_text)
+        painter.end()
+
+
+class EpisodeRow(QFrame):
+    clicked = pyqtSignal(str, int)
+
+    def __init__(self, path: Path, number: int, parent=None):
+        super().__init__(parent)
+        self.setObjectName("episodeRow")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setMouseTracking(True)
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(12); shadow.setOffset(0, 2); shadow.setColor(QColor(29, 29, 31, 30))
+        self.setGraphicsEffect(shadow)
+        layout = QHBoxLayout(self); layout.setContentsMargins(14, 8, 14, 8); layout.setSpacing(12)
+        label = QLabel(f"第 {number:02d} 集"); label.setObjectName("episodeNumber"); label.setFixedWidth(62); layout.addWidget(label)
+        self.name_label = MarqueeLabel(path.stem); self.name_label.setObjectName("episodeName"); self.name_label.setToolTip(path.name); layout.addWidget(self.name_label, 1)
+        self.path = str(path); self.number = number
+
+    def sizeHint(self):
+        return QSize(0, 40)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.path, self.number)
+        super().mousePressEvent(event)
+
+
+class AnimeFolderDialog(QDialog):
+    """Modal episode browser and progress editor for a local anime folder."""
+
+    progressSaved = pyqtSignal(int)
+
+    VIDEO_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".ts"}
+
+    def __init__(self, item: dict, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.item = item
+        self.setObjectName("animeDialog")
+        self.setModal(True)
+        self.setWindowModality(Qt.WindowModality.ApplicationModal)
+        self.setWindowTitle(item.get("title", "番剧详情"))
+        self.setMinimumSize(560, 520)
+        self.resize(620, 620)
+        outer = QVBoxLayout(self); outer.setContentsMargins(22, 20, 22, 20); outer.setSpacing(14)
+        header = QHBoxLayout()
+        cover = QLabel(); cover.setObjectName("animeDialogCover"); cover.setFixedSize(86, 116); cover.setPixmap(AnimeCard._cover_pixmap(item.get("cover", ""))); header.addWidget(cover)
+        intro = QVBoxLayout(); intro.addWidget(QLabel(item.get("title", "未命名番剧"), objectName="animeDialogTitle"))
+        names = {"backlog": "补番", "watching": "追番", "completed": "已看完"}
+        intro.addWidget(QLabel(names.get(item.get("category", "watching"), "追番"), objectName="animeCategoryChip"))
+        if item.get("category") == "backlog":
+            intro.addWidget(QLabel("本地补番清单 · 未设置放送安排", objectName="animeDialogHint"))
+        else:
+            intro.addWidget(QLabel(f"放送：{item.get('start_date', '')} 至 {item.get('end_date', '')}", objectName="animeDialogHint"))
+            intro.addWidget(QLabel(f"更新日：{anime_days_text(item)}", objectName="animeDialogHint"))
+        intro.addStretch(); header.addLayout(intro, 1); outer.addLayout(header)
+
+        self.episode_list = QListWidget(objectName="episodeListPanel")
+        folder = Path(item.get("folder", "")) if item.get("folder") else None
+        self.files = self._video_files(folder)
+        if self.files:
+            for index, path in enumerate(self.files, 1):
+                episode = EpisodeRow(path, index)
+                row = QListWidgetItem(); row.setSizeHint(QSize(0, 48)); self.episode_list.addItem(row)
+                episode.clicked.connect(self._play_episode_path); self.episode_list.setItemWidget(row, episode)
+            self.episode_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            outer.addWidget(QLabel(f"检测到 {len(self.files)} 个视频文件（点击集数开始播放）", objectName="animeDialogHint"))
+            self.episode_list.setMinimumHeight(min(320, max(128, len(self.files) * 34)))
+            outer.addWidget(self.episode_list, 1)
+        else:
+            empty = QLabel("未绑定本地文件夹，或文件夹内没有可识别的视频。\n你仍可以在这里查看番剧信息并设置观看进度。", objectName="animeDialogHint"); empty.setWordWrap(True); outer.addWidget(empty); outer.addStretch(1)
+
+        total = int(item.get("episode_count", 12) or 12)
+        progress_row = QHBoxLayout(); progress_row.setSpacing(8); progress_row.addWidget(QLabel("当前观看到", objectName="fieldLabel"))
+        self.progress = QSpinBox(); self.progress.setObjectName("animeProgressInput"); self.progress.setRange(0, total); self.progress.setValue(min(max(self._progress_number(item), 0), self.progress.maximum())); self.progress.setFixedWidth(82); progress_row.addWidget(self.progress)
+        minus = QPushButton("−", objectName="animeStepButton"); plus = QPushButton("＋", objectName="animeStepButton"); minus.setFixedSize(38, 38); plus.setFixedSize(38, 38); minus.clicked.connect(self.progress.stepDown); plus.clicked.connect(self.progress.stepUp); progress_row.addWidget(minus); progress_row.addWidget(plus)
+        progress_row.addWidget(QLabel(f"/ {total} 集", objectName="animeDialogHint")); progress_row.addStretch(); outer.addLayout(progress_row)
+        self.feedback = QLabel("", objectName="animeDialogHint"); outer.addWidget(self.feedback)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Close)
+        buttons.button(QDialogButtonBox.StandardButton.Save).setObjectName("primaryButton"); buttons.button(QDialogButtonBox.StandardButton.Save).setText("保存进度")
+        buttons.button(QDialogButtonBox.StandardButton.Close).setObjectName("secondaryButton"); buttons.button(QDialogButtonBox.StandardButton.Close).setText("关闭")
+        buttons.accepted.connect(self._save_progress); buttons.rejected.connect(self.reject); outer.addWidget(buttons)
+        QTimer.singleShot(0, self._fit_to_content)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit_episode_rows()
+
+    def _fit_episode_rows(self):
+        if not hasattr(self, "episode_list"): return
+        width = max(0, self.episode_list.viewport().width())
+        for index in range(self.episode_list.count()):
+            row = self.episode_list.itemWidget(self.episode_list.item(index))
+            if row is not None:
+                row.setFixedWidth(width)
+
+    def _fit_to_content(self):
+        hint = self.sizeHint()
+        screen = QApplication.primaryScreen()
+        available = screen.availableGeometry() if screen else None
+        width = min(max(hint.width(), 560), available.width() - 48 if available else 760)
+        height = min(max(hint.height(), 420), available.height() - 48 if available else 760)
+        self.resize(width, height)
+
+    @staticmethod
+    def _progress_number(item):
+        value = item.get("progress", 0)
+        digits = "".join(ch for ch in str(value) if ch.isdigit())
+        return int(digits or 0)
+
+    @classmethod
+    def _video_files(cls, folder):
+        if not folder or not folder.is_dir(): return []
+        files = [path for path in folder.rglob("*") if path.is_file() and path.suffix.lower() in cls.VIDEO_EXTENSIONS]
+        def natural(path):
+            return [int(part) if part.isdigit() else part.casefold() for part in re.split(r"(\d+)", path.name)]
+        return sorted(files, key=natural)
+
+    def _play_episode_path(self, path, number):
+        try:
+            os.startfile(path)
+            self.progress.setValue(number)
+            self.feedback.setText("已打开默认播放器。保存进度即可记录当前集数。")
+        except OSError as error:
+            self.feedback.setText(f"无法打开视频：{error}")
+
+    def _save_progress(self):
+        self.progressSaved.emit(self.progress.value())
+        self.accept()
+
+
 class TimeTipWindow(CountdownPageMixin, QMainWindow):
     def __init__(self, store: Store | None = None) -> None:
         super().__init__()
         self.store = store or Store()
+        # Apply the persisted theme before constructing widgets so every child starts
+        # with the right palette; later changes reuse the same window and widgets.
+        self.theme = apply_theme(QApplication.instance(), self.store.get("theme", "light"))
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(make_app_icon())
         self.setMinimumSize(860, 620)
@@ -239,6 +585,43 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
 
     def toggle_maximized(self):
         self.showNormal() if self.isMaximized() else self.showMaximized()
+
+    def set_theme(self, theme_id: str) -> None:
+        """Switch the theme in place; timers, pages, edits and window state survive."""
+        self.theme = apply_theme(QApplication.instance(), theme_id)
+        self.store.set("theme", self.theme.id)
+        if hasattr(self, "title_bar"):
+            self.title_bar.set_theme(self.theme)
+        if hasattr(self, "theme_combo"):
+            self.theme_combo.blockSignals(True)
+            self.theme_combo.setCurrentIndex(max(0, self.theme_combo.findData(self.theme.id)))
+            self.theme_combo.blockSignals(False)
+            self.theme_description.setText(self.theme.description)
+        # Date marks use the accent color and therefore need repainting too.
+        if hasattr(self, "calendar"):
+            self._update_summary()
+
+    def toggle_theme(self) -> None:
+        ids = [theme.id for theme in available_themes()]
+        current = ids.index(self.theme.id) if self.theme.id in ids else 0
+        self.set_theme(ids[(current + 1) % len(ids)])
+
+    def save_theme(self) -> None:
+        if hasattr(self, "theme_combo") and self.theme_combo.currentData():
+            self.set_theme(self.theme_combo.currentData())
+
+    def refresh_theme_options(self) -> None:
+        """Refresh settings after an extension registers a new theme at runtime."""
+        if not hasattr(self, "theme_combo"):
+            return
+        current = self.theme.id
+        self.theme_combo.blockSignals(True)
+        self.theme_combo.clear()
+        for theme in available_themes():
+            self.theme_combo.addItem(theme.label, theme.id)
+        self.theme_combo.setCurrentIndex(max(0, self.theme_combo.findData(current)))
+        self.theme_combo.blockSignals(False)
+        self.theme_description.setText(self.theme.description)
 
     def _setup_resize(self):
         E, C = Qt.Edge, Qt.CursorShape
@@ -323,7 +706,9 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
         root_layout = QVBoxLayout(root)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
-        root_layout.addWidget(TitleBar(self))
+        self.title_bar = TitleBar(self)
+        self.title_bar.set_theme(self.theme)
+        root_layout.addWidget(self.title_bar)
 
         body = QWidget()
         body_layout = QHBoxLayout(body)
@@ -340,14 +725,18 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
         side_label.setObjectName("sectionLabel")
         side_layout.addWidget(side_label)
         self.nav_buttons: list[QPushButton] = []
+        nav_by_index = {}
         for text, page_index in [("概览", 0), ("日历提醒", 1), ("番茄钟", 2), ("备忘录", 3), ("倒计时", 4), ("设置", 5), ("看番提醒", 6)]:
             button = QPushButton(text)
             button.setObjectName("navButton")
             button.setCheckable(True)
             button.setMinimumHeight(44)
             button.clicked.connect(lambda _checked, i=page_index: self._switch_page(i))
-            side_layout.addWidget(button)
-            self.nav_buttons.append(button)
+            nav_by_index[page_index] = button
+        # Keep page-index order for state updates while placing 看番提醒 above 设置 visually.
+        for page_index in (0, 1, 2, 3, 4, 6, 5):
+            side_layout.addWidget(nav_by_index[page_index])
+        self.nav_buttons = [nav_by_index[index] for index in range(7)]
         side_layout.addStretch()
         hint = QLabel("私人效率工具\n数据仅保存在本机")
         hint.setObjectName("sideHint")
@@ -393,11 +782,12 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
         self.edit_layout_button.toggled.connect(self._toggle_layout_editing)
         header.addWidget(self.edit_layout_button)
         layout.addLayout(header)
-        self.layout_hint = QLabel("点击组件右上角 ··· 调整大小、顺序或隐藏；隐藏的组件可在设置中恢复。", objectName="pageSubtitle")
+        self.layout_hint = QLabel("拖动组件调整位置，点击右上角 ··· 调整大小、顺序或隐藏；隐藏的组件可在设置中恢复。", objectName="pageSubtitle")
         self.layout_hint.setWordWrap(True)
         self.layout_hint.hide()
         layout.addWidget(self.layout_hint)
         self.grid = WidgetGrid()
+        self.grid.tileMoved.connect(lambda key, target: self._change_widget(key, "move_to", target))
         self.dashboard_scroll = self._scroll_page(self.grid)
         layout.addWidget(self.dashboard_scroll, 1)
         footer = QHBoxLayout()
@@ -461,6 +851,7 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
     def _toggle_layout_editing(self, editing):
         self.edit_layout_button.setText("完成布局" if editing else "编辑布局")
         self.layout_hint.setVisible(editing)
+        self.grid.set_editing(editing)
         for tile in self.tiles.values():
             tile.set_editing(editing)
 
@@ -477,6 +868,14 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
             keys[index], keys[target] = keys[target], keys[index]
             for order, item_key in enumerate(keys):
                 self.widget_config[item_key]["order"] = order
+        elif action == "move_to":
+            keys = [spec[0] for spec in self._ordered_specs()]
+            if key in keys:
+                keys.remove(key)
+                target = max(0, min(len(keys), int(value)))
+                keys.insert(target, key)
+                for order, item_key in enumerate(keys):
+                    self.widget_config[item_key]["order"] = order
         self.store.write_json("widgets", self.widget_config)
         self._rebuild_dashboard()
         self._refresh_widget_settings()
@@ -785,8 +1184,6 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
         self.anime_sort = QComboBox(); self.anime_sort.setAccessibleName("番剧排序"); self.anime_sort.addItem("默认顺序", "default"); self.anime_sort.addItem("名称 A–Z", "title"); self.anime_sort.addItem("更新日期", "date"); self.anime_sort.currentIndexChanged.connect(self._refresh_anime_list); toolbar.addWidget(self.anime_sort)
         toolbar.addStretch()
         add = QPushButton("＋ 添加番剧", objectName="primaryButton"); add.clicked.connect(lambda: self.edit_anime(None)); toolbar.addWidget(add)
-        edit = QPushButton("编辑", objectName="secondaryButton"); edit.clicked.connect(lambda: self.edit_anime(self.anime_list.currentItem().data(Qt.ItemDataRole.UserRole) if self.anime_list.currentItem() else None)); toolbar.addWidget(edit)
-        delete = QPushButton("删除", objectName="secondaryButton"); delete.clicked.connect(self.delete_anime); toolbar.addWidget(delete)
         layout.addLayout(toolbar)
 
         self.anime_list = QListWidget(objectName="animeListPanel")
@@ -795,7 +1192,6 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
         self.anime_list.setUniformItemSizes(True)
         self.anime_list.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
         self.anime_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
-        self.anime_list.itemDoubleClicked.connect(lambda current: self.edit_anime(current.data(Qt.ItemDataRole.UserRole)))
         layout.addWidget(self.anime_list, 1)
         self.anime_feedback = QLabel("添加后会自动在对应日期的日历上显示。", objectName="cardHint"); layout.addWidget(self.anime_feedback)
         # Compatibility fields remain hidden for older integrations; all visible editing uses AnimeDialog.
@@ -816,33 +1212,26 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
         elif sort_mode == "date": items.sort(key=lambda item: str(item.get("start_date", "")), reverse=True)
         for item in items:
             card = AnimeCard(item)
+            card.edit_button.clicked.connect(lambda _checked=False, anime_id=item["id"]: self.edit_anime(anime_id))
+            card.delete_button.clicked.connect(lambda _checked=False, anime_id=item["id"]: self.delete_anime_id(anime_id))
+            card.opened.connect(lambda anime_id=item["id"]: self.open_anime_details(anime_id))
             row = QListWidgetItem(); row.setData(Qt.ItemDataRole.UserRole, item["id"]); row.setToolTip(item.get("folder", "")); row.setSizeHint(card.sizeHint()); self.anime_list.addItem(row); self.anime_list.setItemWidget(row, card)
         self._select_list_id(self.anime_list, selected_id); self.anime_list.blockSignals(False)
 
     def edit_anime(self, anime_id=None):
         item = next((a for a in self.anime if a["id"] == anime_id), None)
-        current_dialog = getattr(self, "_anime_dialog", None)
-        if current_dialog is not None:
-            if current_dialog.isVisible() and current_dialog.item.get("id", "") == (item or {}).get("id", ""):
-                current_dialog.raise_()
-                current_dialog.activateWindow()
-                return True
-            current_dialog.close()
-            current_dialog.deleteLater()
         dialog = AnimeDialog(item, self)
         self._anime_dialog = dialog
         dialog.submitted.connect(lambda values: self._commit_anime_dialog(dialog, item, values))
-        dialog.finished.connect(lambda _: self._clear_anime_dialog(dialog))
-        dialog.show()
-        dialog.raise_()
-        dialog.activateWindow()
-        return True
+        result = dialog.exec()
+        self._clear_anime_dialog(dialog)
+        return result == QDialog.DialogCode.Accepted
 
     def _commit_anime_dialog(self, dialog, item, values):
         values["id"] = item["id"] if item else uuid.uuid4().hex
         try: validate_anime(values)
         except ValueError as error: self.anime_feedback.setText(str(error)); return False
-        if values.get("cover") and self.store._backend: values["cover"] = self.store._backend.save_cover(values["cover"], values["id"])
+        if values.get("cover"): values["cover"] = self.store.save_cover(values["cover"], values["id"])
         existing = next((a for a in self.anime if a["id"] == values["id"]), None)
         if existing: existing.clear(); existing.update(values)
         else: self.anime.append(values)
@@ -861,10 +1250,28 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
         self.anime.append(item); self.store.save_anime(self.anime); self.active_anime_id = item["id"]; self._refresh_anime_list(item["id"]); self._rebuild_dashboard(); self._update_summary(); return True
     def browse_anime_folder(self): return None
     def _anime_selected(self, current, previous=None): return None
+    def open_anime_details(self, anime_id):
+        item = next((a for a in self.anime if a["id"] == anime_id), None)
+        if not item: return
+        dialog = AnimeFolderDialog(item, self)
+        dialog.progressSaved.connect(lambda value, anime_id=anime_id: self._save_anime_progress(anime_id, value))
+        dialog.exec()
+
+    def _save_anime_progress(self, anime_id, progress):
+        item = next((a for a in self.anime if a["id"] == anime_id), None)
+        if not item: return
+        item["progress"] = progress
+        self.store.save_anime(self.anime)
+        self._refresh_anime_list(anime_id); self._rebuild_dashboard(); self._update_summary()
+
+    def delete_anime_id(self, anime_id):
+        self.anime = [a for a in self.anime if a["id"] != anime_id]
+        self.store.save_anime(self.anime); self._refresh_anime_list(); self._rebuild_dashboard(); self._update_summary()
+
     def delete_anime(self):
         item = self.anime_list.currentItem()
         if not item: return
-        anime_id = item.data(Qt.ItemDataRole.UserRole); self.anime = [a for a in self.anime if a["id"] != anime_id]; self.store.save_anime(self.anime); self._refresh_anime_list(); self._rebuild_dashboard(); self._update_summary()
+        self.delete_anime_id(item.data(Qt.ItemDataRole.UserRole))
 
     def _settings_page(self):
         page = QWidget()
@@ -882,6 +1289,21 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
         self.date_format_combo.currentIndexChanged.connect(self.save_date_format)
         date_row.addWidget(self.date_format_combo, 1)
         layout.addWidget(date_card)
+        theme_card = Card()
+        theme_layout = QVBoxLayout(theme_card)
+        theme_layout.setContentsMargins(20, 14, 20, 14)
+        theme_row = QHBoxLayout()
+        theme_row.addWidget(QLabel("界面主题", objectName="cardTitle"))
+        self.theme_combo = QComboBox()
+        self.theme_combo.setAccessibleName("界面主题")
+        self.theme_combo.currentIndexChanged.connect(self.save_theme)
+        theme_row.addWidget(self.theme_combo, 1)
+        theme_layout.addLayout(theme_row)
+        self.theme_description = QLabel("", objectName="cardHint")
+        self.theme_description.setWordWrap(True)
+        theme_layout.addWidget(self.theme_description)
+        layout.addWidget(theme_card)
+        self.refresh_theme_options()
         startup_card = Card()
         startup_layout = QVBoxLayout(startup_card)
         startup_layout.setContentsMargins(20, 14, 20, 14)
@@ -1005,10 +1427,10 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
             self.startup_check.blockSignals(True)
             self.startup_check.setChecked(not enabled)
             self.startup_check.blockSignals(False)
-            self.startup_feedback.setStyleSheet("color: #BA3345;")
+            set_feedback_state(self.startup_feedback, "error")
             self.startup_feedback.setText(str(error))
             return False
-        self.startup_feedback.setStyleSheet("color: #237255;")
+        set_feedback_state(self.startup_feedback, "success")
         self.startup_feedback.setText("已开启：登录 Windows 后自动启动。" if enabled else "已关闭开机自启。")
         return True
 
@@ -1044,18 +1466,19 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
         try:
             validate_salary(config)
         except ValueError as error:
-            self.salary_feedback.setStyleSheet("color: #BA3345;")
+            set_feedback_state(self.salary_feedback, "error")
             self.salary_feedback.setText(str(error))
             return False
         self.salary_config = config
         self.store.write_json("salary", config)
         result = salary_snapshot(config, datetime.now())
-        self.salary_feedback.setStyleSheet("color: #237255;")
+        set_feedback_state(self.salary_feedback, "success")
         self.salary_feedback.setText(f"已保存 · 本月 {result['workdays']} 个工作日 · 每日 ¥ {result['daily']:,.2f} · 每秒 ¥ {result['per_second']:.4f}")
         self._render_dashboard(datetime.now())
         return True
 
     def _load_settings(self) -> None:
+        self.set_theme(self.store.get("theme", self.theme.id))
         for key, spin, default in [("work", self.work_spin, 25), ("break", self.break_spin, 5)]:
             try:
                 spin.setValue(int(self.store.get(key, str(default))))
@@ -1339,7 +1762,7 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
             date = QDate.fromString(reminder["date"], "yyyy-MM-dd")
             if date.isValid():
                 style = QTextCharFormat()
-                style.setForeground(QColor(PRIMARY))
+                style.setForeground(QColor(self.theme.colors["primary"]))
                 style.setFontWeight(QFont.Weight.Bold)
                 style.setToolTip("有日历提醒")
                 self.calendar.setDateTextFormat(date, style)
@@ -1351,7 +1774,7 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
             for day in schedule:
                 qday = QDate(day.year, day.month, day.day)
                 style = QTextCharFormat()
-                style.setForeground(QColor("#D47A2A"))
+                style.setForeground(QColor(self.theme.colors["warning"]))
                 style.setFontWeight(QFont.Weight.Bold)
                 style.setToolTip("有番剧更新：" + anime["title"])
                 self.calendar.setDateTextFormat(qday, style)

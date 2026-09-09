@@ -1,10 +1,64 @@
 """Countdown form, selection and view rendering."""
 from datetime import datetime
-from PyQt6.QtCore import QDateTime, QTime, Qt
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QListWidget, QListWidgetItem, QLineEdit, QComboBox, QDateTimeEdit, QTimeEdit, QPushButton, QCheckBox)
+from PyQt6.QtCore import QDateTime, QTime, Qt, pyqtSignal
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QListWidget, QListWidgetItem, QLineEdit, QComboBox, QDateTimeEdit, QTimeEdit, QPushButton, QCheckBox, QFrame, QSizePolicy)
 from app.presentation.widgets import Card
 from app.domain.countdowns import countdown_snapshot
 from app.application.countdowns import prepare_countdown, collect_due
+
+
+class CountdownCard(QFrame):
+    """Compact card row used by the countdown list."""
+
+    clicked = pyqtSignal()
+
+    def __init__(self, item: dict, snapshot: dict | None = None, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("countdownCard")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setMinimumHeight(104)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(14, 12, 16, 12)
+        layout.setSpacing(14)
+
+        self.badge = QLabel("⏱")
+        self.badge.setObjectName("countdownCardBadge")
+        self.badge.setFixedSize(58, 58)
+        self.badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.badge)
+
+        details = QVBoxLayout()
+        details.setSpacing(4)
+        self.title = QLabel()
+        self.title.setObjectName("countdownCardTitle")
+        self.title.setWordWrap(False)
+        self.title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        details.addWidget(self.title)
+        self.hint = QLabel()
+        self.hint.setObjectName("countdownCardMeta")
+        details.addWidget(self.hint)
+        self.value = QLabel()
+        self.value.setObjectName("countdownCardValue")
+        details.addWidget(self.value)
+        details.addStretch()
+        layout.addLayout(details, 1)
+        self.update_item(item, snapshot)
+
+    def update_item(self, item: dict, snapshot: dict | None = None) -> None:
+        self.title.setText(item.get("title", "未命名倒计时"))
+        self.title.setToolTip(item.get("title", ""))
+        if snapshot:
+            self.hint.setText(snapshot.get("hint", ""))
+            self.value.setText(snapshot.get("text", ""))
+            self.setToolTip(self.title.text() + "\n" + self.hint.text() + " · " + self.value.text())
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
 
 class CountdownPageMixin:
     def _countdowns_page(self):
@@ -13,11 +67,14 @@ class CountdownPageMixin:
         layout.setContentsMargins(8, 14, 8, 14)
         layout.setSpacing(14)
         self._page_header(layout, "倒计时", "标准倒计时到期停止，循环倒计时按时段自动开始下一轮。")
-        self.countdown_list = QListWidget(objectName="cleanList")
-        self.countdown_list.setFixedHeight(140)
-        self.countdown_list.setWordWrap(True)
+        self.countdown_list = QListWidget(objectName="animeListPanel")
+        self.countdown_list.setMinimumHeight(250)
+        self.countdown_list.setSpacing(10)
+        self.countdown_list.setUniformItemSizes(True)
+        self.countdown_list.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
+        self.countdown_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         self.countdown_list.currentItemChanged.connect(self._countdown_selected)
-        layout.addWidget(self.countdown_list)
+        layout.addWidget(self.countdown_list, 1)
         card = Card()
         form = QVBoxLayout(card)
         form.setContentsMargins(20, 18, 20, 18)
@@ -126,6 +183,11 @@ class CountdownPageMixin:
                 item = QListWidgetItem()
                 item.setData(Qt.ItemDataRole.UserRole, countdown["id"])
                 widget.addItem(item)
+                if widget is self.countdown_list:
+                    card = CountdownCard(countdown)
+                    item.setSizeHint(card.sizeHint())
+                    widget.setItemWidget(item, card)
+                    card.clicked.connect(lambda row=item, list_widget=widget: list_widget.setCurrentItem(row))
             self._select_list_id(widget, self.active_countdown_id)
             widget.blockSignals(False)
         self._render_countdown_lists(datetime.now())
@@ -142,8 +204,15 @@ class CountdownPageMixin:
                     break
                 snapshot = snapshots[row]
                 text = countdown["title"] + "\n" + snapshot["hint"] + " · " + snapshot["text"]
-                widget.item(row).setText(text)
-                widget.item(row).setToolTip(text)
+                item = widget.item(row)
+                item.setText(text)
+                if widget is self.countdown_list:
+                    card = widget.itemWidget(item)
+                    if card is not None:
+                        card.update_item(countdown, snapshot)
+                    item.setToolTip(text)
+                else:
+                    item.setToolTip(text)
 
     def _countdown_selected(self, current, previous=None):
         if not current:

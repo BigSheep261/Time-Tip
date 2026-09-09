@@ -1,8 +1,10 @@
-"""Modeless editor for anime entries."""
+"""Modal editor for anime entries."""
 from __future__ import annotations
 
 from datetime import date, timedelta
 from pathlib import Path
+import tempfile
+import uuid
 
 from PyQt6.QtCore import QDate, Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap
@@ -22,10 +24,49 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from app.domain.anime import CATEGORIES, WEEKDAY_NAMES, validate_anime
+from app.domain.anime import CATEGORIES, WEEKDAY_NAMES, progress_number, validate_anime
 
 
 DEFAULT_ANIME_COVER = Path(__file__).resolve().parents[2] / "assets" / "anime-default-cover.png"
+
+
+class CoverCropDialog(QDialog):
+    """Small manual crop tool for uploaded covers."""
+
+    def __init__(self, source: str, parent=None):
+        super().__init__(parent)
+        self.setObjectName("animeDialog")
+        self.setModal(True)
+        self.setWindowTitle("裁剪封面")
+        self.source = QPixmap(source)
+        self.cropped = None
+        outer = QVBoxLayout(self); outer.setContentsMargins(20, 18, 20, 18); outer.setSpacing(12)
+        outer.addWidget(QLabel("调整裁剪区域，保存后会作为番剧封面。", objectName="animeDialogHint"))
+        self.preview = QLabel(objectName="animeDialogCover"); self.preview.setFixedSize(220, 220); self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter); outer.addWidget(self.preview, 0, Qt.AlignmentFlag.AlignCenter)
+        form = QFormLayout(); self.crop_x = QSpinBox(); self.crop_y = QSpinBox(); self.crop_width = QSpinBox(); self.crop_height = QSpinBox()
+        for field in (self.crop_x, self.crop_y, self.crop_width, self.crop_height): field.setRange(0, 10000)
+        self.crop_width.setValue(self.source.width()); self.crop_height.setValue(self.source.height()); self.crop_x.setValue(0); self.crop_y.setValue(0)
+        form.addRow("左边距", self.crop_x); form.addRow("上边距", self.crop_y); form.addRow("裁剪宽度", self.crop_width); form.addRow("裁剪高度", self.crop_height); outer.addLayout(form)
+        for field in (self.crop_x, self.crop_y, self.crop_width, self.crop_height): field.valueChanged.connect(self._render)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Save).setObjectName("primaryButton"); buttons.button(QDialogButtonBox.StandardButton.Save).setText("使用此封面")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setObjectName("secondaryButton"); buttons.rejected.connect(self.reject); buttons.accepted.connect(self._accept); outer.addWidget(buttons)
+        self._render()
+
+    def _rect(self):
+        x = min(max(self.crop_x.value(), 0), max(self.source.width() - 1, 0))
+        y = min(max(self.crop_y.value(), 0), max(self.source.height() - 1, 0))
+        w = max(1, min(self.crop_width.value(), self.source.width() - x))
+        h = max(1, min(self.crop_height.value(), self.source.height() - y))
+        return x, y, w, h
+
+    def _render(self):
+        if self.source.isNull(): return
+        rect = self._rect(); cropped = self.source.copy(*rect)
+        self.preview.setPixmap(cropped.scaled(self.preview.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+
+    def _accept(self):
+        self.cropped = self.source.copy(*self._rect()); self.accept()
 
 
 class AnimeDialog(QDialog):
@@ -38,8 +79,8 @@ class AnimeDialog(QDialog):
         self.item = dict(item or {})
         self.setObjectName("animeDialog")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setModal(False)
-        self.setWindowModality(Qt.WindowModality.NonModal)
+        self.setModal(True)
+        self.setWindowModality(Qt.WindowModality.ApplicationModal)
         self.setWindowTitle("编辑番剧" if item else "添加番剧")
         self.setMinimumSize(590, 680)
         self.resize(620, 720)
@@ -90,6 +131,10 @@ class AnimeDialog(QDialog):
         self.weekday.setCurrentIndex(days[0] if days and isinstance(days[0], int) else 0)
         form.addRow("每周更新日", self.weekday)
 
+        self._schedule_fields = [self.start_date, self.end_date, self.weekday]
+        self.category.currentIndexChanged.connect(self._toggle_schedule_fields)
+        self._toggle_schedule_fields()
+
         self.episodes = QSpinBox()
         self.episodes.setRange(1, 999)
         self.episodes.setValue(int(self.item.get("episode_count", 12)))
@@ -98,17 +143,20 @@ class AnimeDialog(QDialog):
 
         progress_row = QHBoxLayout()
         self.progress = QSpinBox()
+        self.progress.setObjectName("animeProgressInput")
         self.progress.setRange(0, self.episodes.value())
         self.progress.setPrefix("第 ")
         self.progress.setSuffix(" 话")
-        self.progress.setValue(int(self.item.get("progress", 0)))
+        self.progress.setValue(progress_number(self.item))
+        self.progress.setFixedWidth(92)
         progress_row.addWidget(self.progress, 1)
-        minus = QPushButton("−", objectName="secondaryButton")
-        plus = QPushButton("＋", objectName="secondaryButton")
-        minus.setFixedWidth(42)
-        plus.setFixedWidth(42)
+        minus = QPushButton("−", objectName="animeStepButton")
+        plus = QPushButton("＋", objectName="animeStepButton")
+        minus.setFixedSize(38, 38)
+        plus.setFixedSize(38, 38)
         minus.clicked.connect(self.progress.stepDown)
         plus.clicked.connect(self.progress.stepUp)
+        progress_row.setSpacing(8)
         progress_row.addWidget(minus)
         progress_row.addWidget(plus)
         form.addRow("观看进度", progress_row)
@@ -164,6 +212,18 @@ class AnimeDialog(QDialog):
         self.progress.setRange(0, value)
         self.progress.setValue(min(self.progress.value(), value))
 
+    def _toggle_schedule_fields(self):
+        visible = self.category.currentData() != "backlog"
+        for field in self._schedule_fields:
+            field.setVisible(visible)
+            label = self._form_label(field)
+            if label:
+                label.setVisible(visible)
+
+    def _form_label(self, field):
+        parent = field.parentWidget()
+        return parent.layout().labelForField(field) if parent and parent.layout() else None
+
     def _choose_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "选择番剧文件夹", self.folder.text() or "")
         if folder:
@@ -172,8 +232,12 @@ class AnimeDialog(QDialog):
     def _choose_cover(self):
         path, _ = QFileDialog.getOpenFileName(self, "选择番剧封面", "", "图片 (*.png *.jpg *.jpeg *.webp)")
         if path:
-            self.cover = path
-            self._render_cover()
+            crop = CoverCropDialog(path, self)
+            if crop.exec() == QDialog.DialogCode.Accepted and crop.cropped:
+                target = Path(tempfile.gettempdir()) / f"timetip-cover-{uuid.uuid4().hex}.png"
+                crop.cropped.save(str(target), "PNG")
+                self.cover = str(target)
+                self._render_cover()
 
     def _render_cover(self):
         source = Path(self.cover) if self.cover and Path(self.cover).is_file() else DEFAULT_ANIME_COVER
@@ -189,13 +253,14 @@ class AnimeDialog(QDialog):
             self.cover_label.setText("TimeTip\n番剧封面")
 
     def values(self):
+        backlog = self.category.currentData() == "backlog"
         return {
             "id": self.item.get("id", ""),
             "title": self.name.text().strip(),
             "category": self.category.currentData(),
-            "start_date": self.start_date.date().toString("yyyy-MM-dd"),
-            "end_date": self.end_date.date().toString("yyyy-MM-dd"),
-            "air_days": [self.weekday.currentData()],
+            "start_date": self.start_date.date().toString("yyyy-MM-dd") if not backlog else "",
+            "end_date": self.end_date.date().toString("yyyy-MM-dd") if not backlog else "",
+            "air_days": [self.weekday.currentData()] if not backlog else [],
             "episode_count": self.episodes.value(),
             "progress": self.progress.value(),
             "folder": self.folder.text().strip(),

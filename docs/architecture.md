@@ -22,6 +22,7 @@ app/
     anime_dialog.py            番剧非模态编辑窗口
     widgets.py                通用卡片、网格、缩放控件
     theme.py                  样式与颜色
+    # 主题通过 Theme / register_theme / available_themes 扩展；窗口原地应用调色板和样式
 tests/                        领域测试、Qt 回归与进程/安装集成检查
 build_installer.ps1           测试、PyInstaller、C# 安装器、安装验证
 build.bat                     双击构建入口

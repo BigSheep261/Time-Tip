@@ -7,7 +7,7 @@ from PyQt6.QtCore import QSettings
 from app.domain.anime import validate_anime
 
 class DataStore:
-    KEYS = ("work", "break", "salary", "widgets", "window_geometry", "date_format", "target", "target_notified", "memo")
+    KEYS = ("work", "break", "salary", "widgets", "window_geometry", "date_format", "theme", "target", "target_notified", "memo")
     COLLECTIONS = ("countdowns", "memos", "reminders", "anime")
     def __init__(self, root: str | None = None):
         configured = os.environ.get("TIMETIP_DATA_DIR")
