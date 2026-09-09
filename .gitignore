@@ -1,4 +1,7 @@
 __pycache__/
+.conda-build/
+.conda-pkgs/
+.idea/
 .venv/
 build/
 dist/

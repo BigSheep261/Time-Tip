@@ -341,6 +341,18 @@ class AppTests(unittest.TestCase):
         self.window._render_dashboard(datetime.now())
         self.window.grab().save(str(output / 'widgets-1x1.png'))
 
+    def test_settings_navigation_highlights_settings_button(self):
+        self.assertEqual([button.text() for button in self.window.nav_buttons],
+                         ['概览', '日历提醒', '番茄钟', '备忘录', '倒计时', '设置', '看番提醒'])
+        self.window._switch_page(5)
+        self.assertEqual(self.window.pages.currentIndex(), 5)
+        self.assertTrue(self.window.nav_buttons[5].isChecked())
+        self.assertFalse(self.window.nav_buttons[6].isChecked())
+
+        self.window._switch_page(6)
+        self.assertTrue(self.window.nav_buttons[6].isChecked())
+        self.assertFalse(self.window.nav_buttons[5].isChecked())
+
 
 if __name__ == '__main__':
     unittest.main()

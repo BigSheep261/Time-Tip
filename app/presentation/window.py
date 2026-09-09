@@ -5,7 +5,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 from PyQt6.QtCore import QByteArray, QDate, QEasingCurve, QPoint, QPropertyAnimation, QTime, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap, QTextCharFormat
+from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPixmap, QTextCharFormat
 from PyQt6.QtWidgets import (
     QApplication,
     QBoxLayout,
@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizeGrip,
+    QSizePolicy,
     QSpinBox,
     QStackedWidget,
     QTextEdit,
@@ -42,10 +43,11 @@ from app.domain.layout import WIDGET_SIZES
 from app.domain.countdowns import countdown_snapshot
 from app.domain.anime import anime_for_date, anime_days_text, episode_label, episode_dates, validate_anime
 from app.domain.dates import format_dashboard_date, DATE_FORMATS
-from app.presentation.anime_dialog import AnimeDialog
+from app.presentation.anime_dialog import AnimeDialog, DEFAULT_ANIME_COVER
 from app.presentation.countdowns import CountdownPageMixin
 from app.presentation.widgets import Card, DashboardTile, ResizeHandle, WidgetGrid
 from app.infrastructure.store import Store
+from app.infrastructure import startup
 from app.presentation.theme import APP_NAME, PRIMARY
 
 
@@ -115,6 +117,74 @@ class TitleBar(QFrame):
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.window.toggle_maximized()
+
+
+class AnimeCard(QFrame):
+    """A compact poster card used by the anime reminder list."""
+
+    def __init__(self, item: dict, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("animeCard")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setMinimumHeight(150)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 12, 16, 12)
+        layout.setSpacing(14)
+
+        cover = QLabel()
+        cover.setObjectName("animeCover")
+        cover.setFixedSize(84, 116)
+        cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        cover.setPixmap(self._cover_pixmap(item.get("cover", "")))
+        layout.addWidget(cover)
+
+        details = QVBoxLayout()
+        details.setSpacing(5)
+        title = QLabel(item.get("title", "未命名番剧"))
+        title.setObjectName("animeCardTitle")
+        title.setWordWrap(False)
+        title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        title.setToolTip(item.get("title", ""))
+        details.addWidget(title)
+        category_names = {"backlog": "补番", "watching": "追番", "completed": "已看完"}
+        chip = QLabel(category_names.get(item.get("category", "watching"), "追番"))
+        chip.setObjectName("animeCategoryChip")
+        chip.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        details.addWidget(chip, 0, Qt.AlignmentFlag.AlignLeft)
+        raw_progress = item.get("progress", 0)
+        try:
+            progress_text = f"第 {int(raw_progress or 0)} 集"
+        except (TypeError, ValueError):
+            progress_text = str(raw_progress)
+        try:
+            total = int(item.get("episode_count", 12) or 12)
+        except (TypeError, ValueError):
+            total = 12
+        details.addWidget(QLabel(f"{progress_text} / 共 {total} 集", objectName="animeCardMeta"))
+        details.addWidget(QLabel(f"{anime_days_text(item)} · {item.get('start_date', '')} 起", objectName="animeCardMeta"))
+        details.addStretch()
+        layout.addLayout(details, 1)
+
+    @staticmethod
+    def _cover_pixmap(source: str) -> QPixmap:
+        default = DEFAULT_ANIME_COVER
+        path = Path(source) if source and Path(source).is_file() else default
+        pixmap = QPixmap(str(path)) if path.is_file() else make_app_icon().pixmap(84, 116)
+        if pixmap.isNull():
+            pixmap = make_app_icon().pixmap(84, 116)
+        pixmap = pixmap.scaled(84, 116, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                               Qt.TransformationMode.SmoothTransformation)
+        result = QPixmap(84, 116)
+        result.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(result)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(0, 0, 84, 116, 11, 11)
+        painter.setClipPath(path)
+        painter.drawPixmap(0, 0, pixmap)
+        painter.end()
+        return result
 
 
 class TimeTipWindow(CountdownPageMixin, QMainWindow):
@@ -270,7 +340,7 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
         side_label.setObjectName("sectionLabel")
         side_layout.addWidget(side_label)
         self.nav_buttons: list[QPushButton] = []
-        for text, page_index in [("概览", 0), ("日历提醒", 1), ("番茄钟", 2), ("备忘录", 3), ("倒计时", 4), ("看番提醒", 6), ("设置", 5)]:
+        for text, page_index in [("概览", 0), ("日历提醒", 1), ("番茄钟", 2), ("备忘录", 3), ("倒计时", 4), ("设置", 5), ("看番提醒", 6)]:
             button = QPushButton(text)
             button.setObjectName("navButton")
             button.setCheckable(True)
@@ -466,7 +536,7 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
             elif key == "anime":
                 today = anime_for_date(self.anime, now.date())
                 cover = next((a.get("cover") for a in today if a.get("cover")), next((a.get("cover") for a in self.anime if a.get("cover")), ""))
-                default_cover = Path(__file__).resolve().parents[2] / "assets" / "timetip.png"
+                default_cover = DEFAULT_ANIME_COVER
                 cover_path = Path(cover) if cover and Path(cover).is_file() else default_cover
                 pixmap = QPixmap(str(cover_path)) if cover_path.is_file() else make_app_icon().pixmap(96, 96)
                 tile.value_label.setPixmap(pixmap.scaled(96, 96, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
@@ -705,8 +775,28 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
     def _anime_page(self):
         page = QWidget(); layout = QVBoxLayout(page); layout.setContentsMargins(8, 14, 8, 8); layout.setSpacing(14)
         self._page_header(layout, "看番提醒", "按开始日期、每周更新日和集数自动计算每一话日期；只在日历显示。")
-        self.anime_list = QListWidget(objectName="cleanList"); self.anime_list.setMinimumHeight(150); self.anime_list.itemDoubleClicked.connect(lambda current: self.edit_anime(current.data(Qt.ItemDataRole.UserRole))); layout.addWidget(self.anime_list)
-        row = QHBoxLayout(); add = QPushButton("添加番剧", objectName="primaryButton"); add.clicked.connect(lambda: self.edit_anime(None)); row.addWidget(add); edit = QPushButton("编辑选中", objectName="secondaryButton"); edit.clicked.connect(lambda: self.edit_anime(self.anime_list.currentItem().data(Qt.ItemDataRole.UserRole) if self.anime_list.currentItem() else None)); row.addWidget(edit); delete = QPushButton("删除选中", objectName="secondaryButton"); delete.clicked.connect(self.delete_anime); row.addWidget(delete); row.addStretch(); layout.addLayout(row)
+
+        toolbar = QHBoxLayout(); toolbar.setSpacing(8)
+        self.anime_search = QLineEdit(); self.anime_search.setPlaceholderText("搜索番剧名称或文件夹…"); self.anime_search.setClearButtonEnabled(True); self.anime_search.setMinimumWidth(220); self.anime_search.setAccessibleName("搜索番剧")
+        self.anime_search.textChanged.connect(self._refresh_anime_list); toolbar.addWidget(self.anime_search, 1)
+        self.anime_category_filter = QComboBox(); self.anime_category_filter.setAccessibleName("番剧分类筛选"); self.anime_category_filter.addItem("全部分类", "all")
+        for key, label in (("backlog", "补番"), ("watching", "追番"), ("completed", "已看完")): self.anime_category_filter.addItem(label, key)
+        self.anime_category_filter.currentIndexChanged.connect(self._refresh_anime_list); toolbar.addWidget(self.anime_category_filter)
+        self.anime_sort = QComboBox(); self.anime_sort.setAccessibleName("番剧排序"); self.anime_sort.addItem("默认顺序", "default"); self.anime_sort.addItem("名称 A–Z", "title"); self.anime_sort.addItem("更新日期", "date"); self.anime_sort.currentIndexChanged.connect(self._refresh_anime_list); toolbar.addWidget(self.anime_sort)
+        toolbar.addStretch()
+        add = QPushButton("＋ 添加番剧", objectName="primaryButton"); add.clicked.connect(lambda: self.edit_anime(None)); toolbar.addWidget(add)
+        edit = QPushButton("编辑", objectName="secondaryButton"); edit.clicked.connect(lambda: self.edit_anime(self.anime_list.currentItem().data(Qt.ItemDataRole.UserRole) if self.anime_list.currentItem() else None)); toolbar.addWidget(edit)
+        delete = QPushButton("删除", objectName="secondaryButton"); delete.clicked.connect(self.delete_anime); toolbar.addWidget(delete)
+        layout.addLayout(toolbar)
+
+        self.anime_list = QListWidget(objectName="animeListPanel")
+        self.anime_list.setMinimumHeight(250)
+        self.anime_list.setSpacing(10)
+        self.anime_list.setUniformItemSizes(True)
+        self.anime_list.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
+        self.anime_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self.anime_list.itemDoubleClicked.connect(lambda current: self.edit_anime(current.data(Qt.ItemDataRole.UserRole)))
+        layout.addWidget(self.anime_list, 1)
         self.anime_feedback = QLabel("添加后会自动在对应日期的日历上显示。", objectName="cardHint"); layout.addWidget(self.anime_feedback)
         # Compatibility fields remain hidden for older integrations; all visible editing uses AnimeDialog.
         self.anime_name = QLineEdit(self); self.anime_update = QTimeEdit(self); self.anime_folder = QLineEdit(self); self.anime_progress = QLineEdit(self); self.anime_day_checks = [QCheckBox(self) for _ in range(7)]
@@ -714,25 +804,53 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
         layout.addStretch(); return self._scroll_page(page)
 
     def _refresh_anime_list(self, selected_id=None):
+        if not hasattr(self, "anime_list"): return
+        current = self.anime_list.currentItem()
+        if selected_id is None and current is not None: selected_id = current.data(Qt.ItemDataRole.UserRole)
         self.anime_list.blockSignals(True); self.anime_list.clear()
-        for item in self.anime:
-            dates = episode_dates(item); date_text = dates[0].isoformat() + " 起" if dates else "无有效播出日期"
-            row = QListWidgetItem(item["title"] + " · " + dict((k,v) for k,v in (("backlog","补番"),("watching","追番"),("completed","已看完"))).get(item.get("category","watching"), "追番") + "\n" + anime_days_text(item) + " · " + str(item.get("episode_count",12)) + " 集 · " + episode_label(item) + " · " + date_text)
-            row.setData(Qt.ItemDataRole.UserRole, item["id"]); row.setToolTip(item.get("folder", "")); self.anime_list.addItem(row)
+        query = self.anime_search.text().strip().casefold() if hasattr(self, "anime_search") else ""
+        category = self.anime_category_filter.currentData() if hasattr(self, "anime_category_filter") else "all"
+        items = [item for item in self.anime if (not query or query in str(item.get("title", "")).casefold() or query in str(item.get("folder", "")).casefold()) and (category in (None, "all") or item.get("category", "watching") == category)]
+        sort_mode = self.anime_sort.currentData() if hasattr(self, "anime_sort") else "default"
+        if sort_mode == "title": items.sort(key=lambda item: str(item.get("title", "")).casefold())
+        elif sort_mode == "date": items.sort(key=lambda item: str(item.get("start_date", "")), reverse=True)
+        for item in items:
+            card = AnimeCard(item)
+            row = QListWidgetItem(); row.setData(Qt.ItemDataRole.UserRole, item["id"]); row.setToolTip(item.get("folder", "")); row.setSizeHint(card.sizeHint()); self.anime_list.addItem(row); self.anime_list.setItemWidget(row, card)
         self._select_list_id(self.anime_list, selected_id); self.anime_list.blockSignals(False)
 
     def edit_anime(self, anime_id=None):
         item = next((a for a in self.anime if a["id"] == anime_id), None)
+        current_dialog = getattr(self, "_anime_dialog", None)
+        if current_dialog is not None:
+            if current_dialog.isVisible() and current_dialog.item.get("id", "") == (item or {}).get("id", ""):
+                current_dialog.raise_()
+                current_dialog.activateWindow()
+                return True
+            current_dialog.close()
+            current_dialog.deleteLater()
         dialog = AnimeDialog(item, self)
-        if dialog.exec() != QDialog.DialogCode.Accepted: return False
-        values = dialog.values(); values["id"] = item["id"] if item else uuid.uuid4().hex
+        self._anime_dialog = dialog
+        dialog.submitted.connect(lambda values: self._commit_anime_dialog(dialog, item, values))
+        dialog.finished.connect(lambda _: self._clear_anime_dialog(dialog))
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        return True
+
+    def _commit_anime_dialog(self, dialog, item, values):
+        values["id"] = item["id"] if item else uuid.uuid4().hex
         try: validate_anime(values)
         except ValueError as error: self.anime_feedback.setText(str(error)); return False
         if values.get("cover") and self.store._backend: values["cover"] = self.store._backend.save_cover(values["cover"], values["id"])
         existing = next((a for a in self.anime if a["id"] == values["id"]), None)
         if existing: existing.clear(); existing.update(values)
         else: self.anime.append(values)
-        self.store.save_anime(self.anime); self._refresh_anime_list(values["id"]); self._rebuild_dashboard(); self._update_summary(); self.anime_feedback.setText("已保存，放送日期会自动标记到日历。"); return True
+        self.store.save_anime(self.anime); self._refresh_anime_list(values["id"]); self._rebuild_dashboard(); self._update_summary(); self.anime_feedback.setText("已保存，放送日期会自动标记到日历。")
+
+    def _clear_anime_dialog(self, dialog):
+        if getattr(self, "_anime_dialog", None) is dialog:
+            self._anime_dialog = None
 
     def new_anime(self): return self.edit_anime(None)
     def save_anime(self):
@@ -764,6 +882,20 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
         self.date_format_combo.currentIndexChanged.connect(self.save_date_format)
         date_row.addWidget(self.date_format_combo, 1)
         layout.addWidget(date_card)
+        startup_card = Card()
+        startup_layout = QVBoxLayout(startup_card)
+        startup_layout.setContentsMargins(20, 14, 20, 14)
+        startup_row = QHBoxLayout()
+        self.startup_check = QCheckBox("开机自动启动 TimeTip")
+        self.startup_check.setAccessibleName("开机自启")
+        self.startup_check.toggled.connect(self._toggle_startup)
+        startup_row.addWidget(self.startup_check)
+        startup_row.addStretch()
+        startup_layout.addLayout(startup_row)
+        self.startup_feedback = QLabel("登录 Windows 后自动打开 TimeTip。", objectName="cardHint")
+        self.startup_feedback.setWordWrap(True)
+        startup_layout.addWidget(self.startup_feedback)
+        layout.addWidget(startup_card)
         transfer_card = Card()
         transfer_row = QHBoxLayout(transfer_card); transfer_row.setContentsMargins(20, 14, 20, 14)
         transfer_row.addWidget(QLabel("数据备份", objectName="cardTitle"))
@@ -866,6 +998,20 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
         layout.addStretch()
         return self._scroll_page(page)
 
+    def _toggle_startup(self, enabled: bool) -> bool:
+        try:
+            startup.set_startup_enabled(enabled)
+        except startup.StartupError as error:
+            self.startup_check.blockSignals(True)
+            self.startup_check.setChecked(not enabled)
+            self.startup_check.blockSignals(False)
+            self.startup_feedback.setStyleSheet("color: #BA3345;")
+            self.startup_feedback.setText(str(error))
+            return False
+        self.startup_feedback.setStyleSheet("color: #237255;")
+        self.startup_feedback.setText("已开启：登录 Windows 后自动启动。" if enabled else "已关闭开机自启。")
+        return True
+
     def _refresh_widget_settings(self):
         while self.widget_settings_layout.count():
             child = self.widget_settings_layout.takeAt(0)
@@ -927,6 +1073,9 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
             check.setChecked(index in config["weekdays"])
         self.date_format = self.store.get("date_format", "full_cn")
         self.date_format_combo.setCurrentIndex(max(0, self.date_format_combo.findData(self.date_format)))
+        self.startup_check.blockSignals(True)
+        self.startup_check.setChecked(startup.is_startup_enabled())
+        self.startup_check.blockSignals(False)
         self._refresh_countdown_lists()
         self._refresh_anime_list()
         self._refresh_memo_list(self.memos[0]["id"] if self.memos else None)

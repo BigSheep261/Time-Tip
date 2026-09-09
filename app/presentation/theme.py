@@ -45,6 +45,21 @@ QDateTimeEdit:focus, QTimeEdit:focus, QLineEdit:focus, QSpinBox:focus, QDoubleSp
 #cleanList {{ border: none; background: transparent; }}
 #cleanList::item {{ background: #F6F7FB; border-radius: 8px; padding: 9px; margin: 2px 0; }}
 #cleanList::item:selected {{ background: #ECE9FF; color: {PRIMARY}; }}
+#animeListPanel {{ background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 18px; padding: 10px; outline: none; }}
+#animeListPanel::item {{ background: transparent; border: none; padding: 0; margin: 0; }}
+#animeListPanel::item:selected {{ background: #F0EDFF; border-radius: 13px; }}
+#animeCard {{ background: #FBFBFD; border: 1px solid #ECECF2; border-radius: 13px; }}
+#animeCard:hover {{ background: #F6F5FF; border: 1px solid #DCD7FF; }}
+#animeCardTitle {{ font-size: 16px; font-weight: 700; color: {TEXT}; }}
+#animeCardMeta {{ color: {MUTED}; font-size: 12px; }}
+#animeCategoryChip {{ background: #ECE9FF; color: {PRIMARY}; border-radius: 7px; padding: 3px 8px; font-size: 11px; font-weight: 700; }}
+#animeCover {{ background: #ECE9FF; border-radius: 11px; }}
+#animeDialog {{ background: {BACKGROUND}; }}
+#animeDialogTitle {{ font-size: 22px; font-weight: 750; color: {TEXT}; }}
+#animeDialogHint {{ color: {MUTED}; font-size: 12px; }}
+#animeDialogCard {{ background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 17px; }}
+#animeDialogCover {{ background: #ECE9FF; border: 1px solid #DCD7FF; border-radius: 13px; }}
+#animeDialogError {{ color: #BA3345; background: #FFF0F2; border: 1px solid #F4CBD2; border-radius: 9px; padding: 8px 11px; }}
 #focusTime {{ font-size: 82px; font-weight: 750; color: {PRIMARY}; padding: 16px; }}
 #focusCard {{ background: #FCFBFF; }}
 QCalendarWidget QWidget {{ alternate-background-color: #FAFAFC; }}

@@ -9,13 +9,23 @@ try {
         if (Test-Path -LiteralPath $venvPython) { $PythonExe = $venvPython }
         else { $PythonExe = (Get-Command python -ErrorAction Stop).Source }
     }
+    # Normalize relative paths before deriving the Conda layout.
+    $PythonExe = (Resolve-Path -LiteralPath $PythonExe).Path
     $pythonDir = Split-Path $PythonExe
+    # Conda keeps native runtime DLLs (for example ffi-8.dll and OpenSSL)
+    # under Library\bin rather than beside python.exe. Include that directory
+    # while PyInstaller resolves dependencies, otherwise the packaged app can
+    # fail before the Qt event loop starts.
+    $condaLibraryBin = Join-Path $pythonDir 'Library\bin'
     & $PythonExe -c "import PyQt6, PyInstaller"
     if ($LASTEXITCODE -ne 0) { throw 'Install build dependencies first: python -m pip install -r requirements-dev.txt' }
     & $PythonExe -m unittest discover -s tests -q
     if ($LASTEXITCODE -ne 0) { throw 'Tests failed; no package was produced.' }
     # Prevent unrelated tools on PATH from contributing incompatible Qt DLLs.
-    $env:PATH = "$pythonDir;$pythonDir\Scripts;$env:SystemRoot\System32;$env:SystemRoot"
+    $pathParts = @($pythonDir, "$pythonDir\Scripts")
+    if (Test-Path -LiteralPath $condaLibraryBin) { $pathParts += $condaLibraryBin }
+    $pathParts += @("$env:SystemRoot\System32", $env:SystemRoot)
+    $env:PATH = ($pathParts -join ';')
     $env:TIMETIP_DEBUG_BUILD = $null
     & $PythonExe -m PyInstaller --noconfirm --clean TimeTip.build.spec
     if ($LASTEXITCODE -ne 0) { throw 'PyInstaller failed.' }

@@ -19,7 +19,7 @@ app/
   presentation/
     window.py                 主窗口、概览、日历、番茄钟、备忘录及设置
     countdowns.py             倒计时表单和列表交互
-    anime_dialog.py            番剧模态编辑对话框
+    anime_dialog.py            番剧非模态编辑窗口
     widgets.py                通用卡片、网格、缩放控件
     theme.py                  样式与颜色
 tests/                        领域测试、Qt 回归与进程/安装集成检查

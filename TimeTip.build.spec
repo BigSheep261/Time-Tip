@@ -5,7 +5,20 @@ import PyQt6
 project = Path(SPECPATH)
 qt_bin = Path(PyQt6.__file__).parent / 'Qt6' / 'bin'
 debug = os.environ.get('TIMETIP_DEBUG_BUILD') == '1'
-a = Analysis([str(project / 'timetip.py')], pathex=[str(project)], binaries=[], datas=[], hiddenimports=[], hookspath=[], runtime_hooks=[], excludes=[], noarchive=False)
+a = Analysis(
+    [str(project / 'timetip.py')],
+    pathex=[str(project)],
+    binaries=[],
+    datas=[
+        (str(project / 'assets' / 'timetip.png'), 'assets'),
+        (str(project / 'assets' / 'anime-default-cover.png'), 'assets'),
+    ],
+    hiddenimports=[],
+    hookspath=[],
+    runtime_hooks=[],
+    excludes=[],
+    noarchive=False,
+)
 # Windows 10/11 supply UCRT and API sets. Older copies from unrelated tools
 # can shadow the OS runtime and prevent Qt from loading in the frozen app.
 clean_binaries = []
