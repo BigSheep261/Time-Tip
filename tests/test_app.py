@@ -7,7 +7,7 @@ from pathlib import Path
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from PyQt6.QtCore import QDateTime, QTime
+from PyQt6.QtCore import QDate, QDateTime, QTime, Qt
 from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
@@ -248,6 +248,37 @@ class AppTests(unittest.TestCase):
         self.window._tick()
         self.assertEqual(self.window.pomodoro_remaining, remaining)
         self.assertFalse(self.window.pomodoro_running)
+
+    def test_calendar_reminder_modes_and_date_format(self):
+        self.window.reminder_mode.setCurrentIndex(1)
+        self.window.reminder_input.setText('仅日历事项')
+        self.window.add_reminder()
+        self.assertEqual(self.store.reminders()[0]['mode'], 'calendar')
+        self.window._check_reminders(datetime.now() + timedelta(days=3))
+        self.assertEqual(self.notifications, [])
+        self.window.date_format_combo.setCurrentIndex(self.window.date_format_combo.findData('japanese'))
+        self.assertEqual(self.store.get('date_format'), 'japanese')
+        self.window._tick()
+        self.assertIn('曜日', self.window.day_label.text())
+
+    def test_anime_schedule_persists_and_marks_calendar_without_notification(self):
+        self.window._switch_page(6)
+        self.window.anime_name.setText('测试番剧')
+        self.window.anime_update.setTime(QTime(21, 30))
+        self.window.anime_day_checks[1].setChecked(True)
+        self.window.anime_folder.setText('D:/Anime')
+        self.window.anime_progress.setText('第 3 集')
+        self.assertTrue(self.window.save_anime())
+        anime_id = self.window.active_anime_id
+        self.assertIn('anime', self.window.tiles)
+        self.restart()
+        self.assertEqual(self.window.anime[0]['id'], anime_id)
+        self.assertEqual(self.window.anime[0]['progress'], '第 3 集')
+        self.window._calendar_selected(QDate(2026, 9, 8))
+        self.assertGreaterEqual(self.window.reminder_list.count(), 1)
+        self.assertEqual(self.window.reminder_list.item(0).data(Qt.ItemDataRole.UserRole)['kind'], 'anime')
+        self.window._check_reminders(datetime(2026, 9, 8, 23))
+        self.assertEqual(self.notifications, [])
 
     def test_calendar_reminder_add_and_delete(self):
         self.window.reminder_input.setText('指定日期事项')
