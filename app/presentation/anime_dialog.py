@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
 )
 
 from app.domain.anime import CATEGORIES, WEEKDAY_NAMES, progress_number, validate_anime
+from app.domain.anime_organization import anime_groups, group_name
 
 
 DEFAULT_ANIME_COVER = Path(__file__).resolve().parents[2] / "assets" / "anime-default-cover.png"
@@ -74,7 +75,7 @@ class AnimeDialog(QDialog):
 
     submitted = pyqtSignal(dict)
 
-    def __init__(self, item=None, parent=None):
+    def __init__(self, item=None, parent=None, groups=()):
         super().__init__(parent)
         self.item = dict(item or {})
         self.setObjectName("animeDialog")
@@ -113,6 +114,17 @@ class AnimeDialog(QDialog):
             self.category.addItem(label, key)
         self.category.setCurrentIndex(max(0, self.category.findData(self.item.get("category", "watching"))))
         form.addRow("分类", self.category)
+
+        self.group = QComboBox()
+        self.group.setEditable(True)
+        self.group.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.group.setAccessibleName("自定义分组，可选择或输入")
+        self.group.addItems(anime_groups([self.item], groups))
+        self.group.setCurrentText(group_name(self.item.get("group")))
+        self.group.lineEdit().setPlaceholderText("选择已有分组，或输入新分组")
+        self.group.lineEdit().setClearButtonEnabled(True)
+        self.group.lineEdit().setMaxLength(80)
+        form.addRow("自定义分组", self.group)
 
         today = date.today()
         start = QDate.fromString(self.item.get("start_date", today.isoformat()), "yyyy-MM-dd")
@@ -258,6 +270,7 @@ class AnimeDialog(QDialog):
             "id": self.item.get("id", ""),
             "title": self.name.text().strip(),
             "category": self.category.currentData(),
+            "group": group_name(self.group.currentText()),
             "start_date": self.start_date.date().toString("yyyy-MM-dd") if not backlog else "",
             "end_date": self.end_date.date().toString("yyyy-MM-dd") if not backlog else "",
             "air_days": [self.weekday.currentData()] if not backlog else [],
