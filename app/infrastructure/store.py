@@ -53,7 +53,7 @@ class Store:
                 item["end_date"] = (date.today() + timedelta(days=3650)).isoformat()
                 item["episode_count"] = 999
                 item["legacy_compat"] = True
-            item.setdefault("start_date", "2026-01-01"); item.setdefault("end_date", "2026-03-31")
+            item.setdefault("start_date", "2026-01-01"); item.setdefault("end_date", "2026-03-31"); item.setdefault("group", "未分组")
             item.setdefault("air_days", [0]); item.setdefault("episode_count", 12); item.setdefault("progress", 0); item.setdefault("folder", ""); item.setdefault("category", "watching"); item.setdefault("cover", "")
             try: validate_anime(item)
             except ValueError: continue
@@ -67,7 +67,7 @@ class Store:
         payload = {"version": 2, "settings": {}, "collections": {}}
         for key in ("work", "break", "salary", "widgets", "window_geometry", "date_format", "theme", "target", "target_notified", "memo"):
             payload["settings"][key] = self.get(key, "")
-        for key in ("countdowns", "memos", "reminders", "anime"):
+        for key in ("countdowns", "memos", "reminders", "anime", "anime_groups"):
             payload["collections"][key] = self.read_json(key, [])
         if Path(path).suffix.lower() == ".zip":
             with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive: archive.writestr("data.json", json.dumps(payload, ensure_ascii=False, indent=2))
@@ -84,7 +84,7 @@ class Store:
         for key, value in payload["settings"].items():
             if key in ("work", "break", "salary", "widgets", "window_geometry", "date_format", "theme", "target", "target_notified", "memo"): self.set(key, value)
         for key, value in payload["collections"].items():
-            if key in ("countdowns", "memos", "reminders", "anime"): self.write_json(key, value)
+            if key in ("countdowns", "memos", "reminders", "anime", "anime_groups"): self.write_json(key, value)
 
     def save_anime(self, items: list[dict]) -> None:
         if self._backend: self._backend.save_anime(items); return

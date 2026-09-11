@@ -8,7 +8,7 @@ from app.domain.anime import validate_anime
 
 class DataStore:
     KEYS = ("work", "break", "salary", "widgets", "window_geometry", "date_format", "theme", "target", "target_notified", "memo")
-    COLLECTIONS = ("countdowns", "memos", "reminders", "anime")
+    COLLECTIONS = ("countdowns", "memos", "reminders", "anime", "anime_groups")
     def __init__(self, root: str | None = None):
         configured = os.environ.get("TIMETIP_DATA_DIR")
         if root: self.root = Path(root)
@@ -65,7 +65,7 @@ class DataStore:
         for source in value:
             if not isinstance(source, dict): continue
             item = source.copy()
-            item.setdefault("id", os.urandom(8).hex()); item.setdefault("start_date", "2026-01-01"); item.setdefault("end_date", "2026-03-31")
+            item.setdefault("id", os.urandom(8).hex()); item.setdefault("start_date", "2026-01-01"); item.setdefault("end_date", "2026-03-31"); item.setdefault("group", "未分组")
             item.setdefault("air_days", [0]); item.setdefault("episode_count", 12); item.setdefault("progress", 0); item.setdefault("folder", ""); item.setdefault("category", "watching"); item.setdefault("cover", "")
             try: validate_anime(item)
             except ValueError: continue
