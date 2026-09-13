@@ -46,7 +46,7 @@ from PyQt6.QtWidgets import (
 from app.domain.salary import DEFAULT_SALARY, salary_snapshot, validate_salary
 from app.domain.layout import WIDGET_SIZES
 from app.domain.countdowns import countdown_snapshot
-from app.domain.anime import anime_for_date, anime_days_text, episode_label, episode_dates, validate_anime
+from app.domain.anime import LOCAL_CATEGORIES, anime_for_date, anime_days_text, episode_label, episode_dates, normalize_tags, validate_anime
 from app.domain.anime_organization import anime_groups, group_name, reorder_anime
 from app.domain.dates import format_dashboard_date, DATE_FORMATS
 from app.presentation.anime_dialog import AnimeDialog, DEFAULT_ANIME_COVER
@@ -279,8 +279,14 @@ class AnimeCard(QFrame):
         except (TypeError, ValueError):
             total = 12
         details.addWidget(QLabel(f"{progress_text} / 共 {total} 集", objectName="animeCardMeta"))
-        schedule_text = "本地补番清单" if item.get("category") == "backlog" else f"{anime_days_text(item)} · {item.get('start_date', '')} 起"
+        schedule_text = "本地清单 · 无放送安排" if item.get("category") in LOCAL_CATEGORIES else f"{anime_days_text(item)} · {item.get('start_date', '')} 起"
         details.addWidget(QLabel(schedule_text, objectName="animeCardMeta"))
+        tags = normalize_tags(item.get("tags", []))
+        if tags:
+            tag_label = QLabel("标签：" + "、".join(tags), objectName="animeCardMeta")
+            tag_label.setToolTip("、".join(tags))
+            tag_label.setWordWrap(False)
+            details.addWidget(tag_label)
         details.addStretch()
         layout.addLayout(details, 1)
 
@@ -508,8 +514,8 @@ class AnimeFolderDialog(QDialog):
         intro = QVBoxLayout(); intro.addWidget(QLabel(item.get("title", "未命名番剧"), objectName="animeDialogTitle"))
         names = {"backlog": "补番", "watching": "追番", "completed": "已看完"}
         intro.addWidget(QLabel(names.get(item.get("category", "watching"), "追番"), objectName="animeCategoryChip"))
-        if item.get("category") == "backlog":
-            intro.addWidget(QLabel("本地补番清单 · 未设置放送安排", objectName="animeDialogHint"))
+        if item.get("category") in LOCAL_CATEGORIES:
+            intro.addWidget(QLabel("本地清单 · 未设置放送安排", objectName="animeDialogHint"))
         else:
             intro.addWidget(QLabel(f"放送：{item.get('start_date', '')} 至 {item.get('end_date', '')}", objectName="animeDialogHint"))
             intro.addWidget(QLabel(f"更新日：{anime_days_text(item)}", objectName="animeDialogHint"))
@@ -1297,7 +1303,7 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
             self.anime_group_filter.setCurrentIndex(max(0, self.anime_group_filter.findData(current_group)))
             self.anime_group_filter.blockSignals(False)
             group = self.anime_group_filter.currentData()
-        items = [item for item in self.anime if (not query or query in str(item.get("title", "")).casefold() or query in str(item.get("folder", "")).casefold()) and (category in (None, "all") or item.get("category", "watching") == category) and (group is None or group_name(item.get("group")) == group)]
+        items = [item for item in self.anime if (not query or query in str(item.get("title", "")).casefold() or query in str(item.get("folder", "")).casefold() or any(query in tag.casefold() for tag in normalize_tags(item.get("tags", [])))) and (category in (None, "all") or item.get("category", "watching") == category) and (group is None or group_name(item.get("group")) == group)]
         sort_mode = self.anime_sort.currentData() if hasattr(self, "anime_sort") else "default"
         if sort_mode == "title": items.sort(key=lambda item: str(item.get("title", "")).casefold())
         elif sort_mode == "date": items.sort(key=lambda item: str(item.get("start_date", "")), reverse=True)

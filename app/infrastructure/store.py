@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 from datetime import date, datetime, timedelta
 from app.domain.countdowns import validate_cycle
-from app.domain.anime import validate_anime
+from app.domain.anime import normalize_tags, validate_anime
 from app.infrastructure.database import DataStore
 from PyQt6.QtCore import QSettings, QDateTime, Qt
 
@@ -55,6 +55,7 @@ class Store:
                 item["legacy_compat"] = True
             item.setdefault("start_date", "2026-01-01"); item.setdefault("end_date", "2026-03-31"); item.setdefault("group", "未分组")
             item.setdefault("air_days", [0]); item.setdefault("episode_count", 12); item.setdefault("progress", 0); item.setdefault("folder", ""); item.setdefault("category", "watching"); item.setdefault("cover", "")
+            item["tags"] = normalize_tags(item.get("tags", []))
             try: validate_anime(item)
             except ValueError: continue
             valid.append(item)

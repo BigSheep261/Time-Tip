@@ -4,7 +4,7 @@ import json, os, sqlite3, sys, zipfile
 from pathlib import Path
 from typing import Any
 from PyQt6.QtCore import QSettings
-from app.domain.anime import validate_anime
+from app.domain.anime import normalize_tags, validate_anime
 
 class DataStore:
     KEYS = ("work", "break", "salary", "widgets", "window_geometry", "date_format", "theme", "target", "target_notified", "memo")
@@ -67,6 +67,7 @@ class DataStore:
             item = source.copy()
             item.setdefault("id", os.urandom(8).hex()); item.setdefault("start_date", "2026-01-01"); item.setdefault("end_date", "2026-03-31"); item.setdefault("group", "未分组")
             item.setdefault("air_days", [0]); item.setdefault("episode_count", 12); item.setdefault("progress", 0); item.setdefault("folder", ""); item.setdefault("category", "watching"); item.setdefault("cover", "")
+            item["tags"] = normalize_tags(item.get("tags", []))
             try: validate_anime(item)
             except ValueError: continue
             result.append(item)

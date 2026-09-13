@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from app.domain.anime import CATEGORIES, WEEKDAY_NAMES, progress_number, validate_anime
+from app.domain.anime import CATEGORIES, LOCAL_CATEGORIES, WEEKDAY_NAMES, normalize_tags, progress_number, validate_anime
 from app.domain.anime_organization import anime_groups, group_name
 
 
@@ -220,7 +220,7 @@ class AnimeDialog(QDialog):
         header = QVBoxLayout()
         header.setSpacing(3)
         header.addWidget(QLabel("番剧信息", objectName="animeDialogTitle"))
-        header.addWidget(QLabel("设置放送安排和观看进度，保存后可继续使用主界面。", objectName="animeDialogHint"))
+        header.addWidget(QLabel("设置观看进度和标签；追番可选填放送安排。", objectName="animeDialogHint"))
         outer.addLayout(header)
 
         card = QFrame(objectName="animeDialogCard")
@@ -252,6 +252,14 @@ class AnimeDialog(QDialog):
         self.group.lineEdit().setClearButtonEnabled(True)
         self.group.lineEdit().setMaxLength(80)
         form.addRow("自定义分组", self.group)
+
+        existing_tags = normalize_tags(self.item.get("tags", []))
+        self.tags = QLineEdit("、".join(existing_tags))
+        self.tags.setPlaceholderText("可选：例如 科幻、治愈、收藏（最多 6 个）")
+        self.tags.setToolTip("多个标签请用逗号、顿号或分号分隔，最多 6 个")
+        self.tags.setClearButtonEnabled(True)
+        self.tags.setMaxLength(240)
+        form.addRow("标签", self.tags)
 
         today = date.today()
         start = QDate.fromString(self.item.get("start_date", today.isoformat()), "yyyy-MM-dd")
@@ -352,7 +360,7 @@ class AnimeDialog(QDialog):
         self.progress.setValue(min(self.progress.value(), value))
 
     def _toggle_schedule_fields(self):
-        visible = self.category.currentData() != "backlog"
+        visible = self.category.currentData() not in LOCAL_CATEGORIES
         for field in self._schedule_fields:
             field.setVisible(visible)
             label = self._form_label(field)
@@ -392,19 +400,20 @@ class AnimeDialog(QDialog):
             self.cover_label.setText("TimeTip\n番剧封面")
 
     def values(self):
-        backlog = self.category.currentData() == "backlog"
+        local = self.category.currentData() in LOCAL_CATEGORIES
         return {
             "id": self.item.get("id", ""),
             "title": self.name.text().strip(),
             "category": self.category.currentData(),
             "group": group_name(self.group.currentText()),
-            "start_date": self.start_date.date().toString("yyyy-MM-dd") if not backlog else "",
-            "end_date": self.end_date.date().toString("yyyy-MM-dd") if not backlog else "",
-            "air_days": [self.weekday.currentData()] if not backlog else [],
+            "start_date": self.start_date.date().toString("yyyy-MM-dd") if not local else "",
+            "end_date": self.end_date.date().toString("yyyy-MM-dd") if not local else "",
+            "air_days": [self.weekday.currentData()] if not local else [],
             "episode_count": self.episodes.value(),
             "progress": self.progress.value(),
             "folder": self.folder.text().strip(),
             "cover": self.cover,
+            "tags": normalize_tags(self.tags.text()),
         }
 
     def _submit(self):

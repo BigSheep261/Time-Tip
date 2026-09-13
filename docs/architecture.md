@@ -39,6 +39,6 @@ installer_stub.cs             校验、替换、恢复和启动安装结果
 
 `tests/verify_package.py` 用 `TIMETIP_TEST_PROFILE` 环境变量提供独立 INI 与测试通信名称，在 `build` 内运行真实 EXE 和安装逻辑；此变量仅供隔离测试，普通启动无需设置。验证不创建用户快捷方式，也不修改正式注册表配置。
 
-番剧实体使用 `start_date`、`end_date`、`air_days`（单个星期）、`episode_count`、`progress`、`category` 和 `cover`。`episode_dates` 按首个不早于开始日期的目标星期逐周生成日期，并以结束日期和集数共同限制结果。`completed` 且进度达到总集数的记录不再出现在当天更新组件。
+番剧实体使用 `start_date`、`end_date`、`air_days`（单个星期）、`episode_count`、`progress`、`category`、`tags`（最多 6 项）和 `cover`。补番与已看完属于本地清单，不生成放送日期；追番的 `episode_dates` 按首个不早于开始日期的目标星期逐周生成日期，并以结束日期和集数共同限制结果。标签只参与列表检索，不改变分类。
 
 普通安装使用 SQLite 数据库，根目录由冻结程序所在目录的 `data` 子目录决定；源码调试可用 `TIMETIP_DATA_DIR` 指定。ZIP 导出包含 JSON 和数据库内封面文件，导入会校验结构并将封面放入新的 `data/covers`。
