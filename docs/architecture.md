@@ -24,7 +24,7 @@ app/
     theme.py                  样式与颜色
     # 主题通过 Theme / register_theme / available_themes 扩展；窗口原地应用调色板和样式
 tests/                        领域测试、Qt 回归与进程/安装集成检查
-build_installer.ps1           测试、PyInstaller、C# 安装器、安装验证
+build_installer.ps1           PyInstaller、C# 安装器和安装包封装
 build.bat                     双击构建入口
 installer_stub.cs             校验、替换、恢复和启动安装结果
 ```
@@ -37,7 +37,7 @@ installer_stub.cs             校验、替换、恢复和启动安装结果
 
 默认数据迁移自旧注册表，之后使用安装目录下的 SQLite 数据库；升级无需更改数据位置。单实例锁串行化启动，锁持有者建立 IPC；第二次启动请求恢复窗口后退出。安装器先校验和解压，再请求已安装进程保存并退出，替换失败尝试回滚，只管理 `TimeTip.exe` 和 `_internal`。
 
-`tests/verify_package.py` 用 `TIMETIP_TEST_PROFILE` 环境变量提供独立 INI 与测试通信名称，在 `build` 内运行真实 EXE 和安装逻辑；此变量仅供隔离测试，普通启动无需设置。验证不创建用户快捷方式，也不修改正式注册表配置。
+`tests/verify_package.py` 用 `TIMETIP_TEST_PROFILE` 环境变量提供独立 INI 与测试通信名称，在临时 `build` 子目录中运行真实 EXE 和安装逻辑；此脚本需按需单独执行，变量仅供隔离测试，普通启动无需设置。验证不创建用户快捷方式，也不修改正式注册表配置。
 
 番剧实体使用 `start_date`、`end_date`、`air_days`（单个星期）、`episode_count`、`progress`、`category`、`tags`（最多 6 项）和 `cover`。补番与已看完属于本地清单，不生成放送日期；追番的 `episode_dates` 按首个不早于开始日期的目标星期逐周生成日期，并以结束日期和集数共同限制结果。标签只参与列表检索，不改变分类。
 

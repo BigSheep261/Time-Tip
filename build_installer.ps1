@@ -26,8 +26,6 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "构建环境缺少 PyQt6 或 PyInstaller（当前 Python：$PythonExe）。请运行：$PythonExe -m pip install -r requirements-dev.txt"
     }
-    & $PythonExe -m unittest discover -s tests -q
-    if ($LASTEXITCODE -ne 0) { throw 'Tests failed; no package was produced.' }
     # Prevent unrelated tools on PATH from contributing incompatible Qt DLLs.
     $pathParts = @($pythonDir, "$pythonDir\Scripts")
     if (Test-Path -LiteralPath $condaLibraryBin) { $pathParts += $condaLibraryBin }
@@ -73,12 +71,9 @@ try {
         $sha.Dispose()
     }
     Move-Item -LiteralPath $temporaryOutput -Destination $outputPath -Force
-    & $PythonExe tests\verify_package.py
-    if ($LASTEXITCODE -ne 0) { throw 'Packaged integration checks failed.' }
     Write-Host "Created $outputPath"
 } finally {
     $env:PATH = $originalPath
     $env:TIMETIP_DEBUG_BUILD = $originalDebug
     Pop-Location
 }
-

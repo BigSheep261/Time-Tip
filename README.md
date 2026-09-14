@@ -64,7 +64,7 @@ python -m pip install -r requirements-dev.txt
 
 也可以直接双击项目目录中的 `build.bat` 或 `打包安装包.bat` 一键构建。脚本优先使用项目 `.venv` 内的 Python，其次使用 PATH 中的 Python；首次构建需先安装上述开发依赖。需要 Windows 10/11 64 位和 .NET Framework 4.x（安装器使用系统自带的 C# 编译器）。
 
-脚本运行测试、构建程序、编译安装器，并在独立目录中验证安装和升级后生成 `TimeTip-Setup.exe`。双击它即可安装到 `%LOCALAPPDATA%\TimeTip`，并创建桌面快捷方式。`dist\TimeTip` 是完整便携目录；不能仅复制其中的 EXE，需连同 `_internal` 一起复制。
+脚本直接构建程序、编译安装器并生成 `TimeTip-Setup.exe`；测试和安装集成检查需按需单独运行。双击它即可安装到 `%LOCALAPPDATA%\TimeTip`，并创建桌面快捷方式。`dist\TimeTip` 是完整便携目录；不能仅复制其中的 EXE，需连同 `_internal` 一起复制。
 
 直接运行源码：
 
