@@ -818,7 +818,7 @@ class TimeTipWindow(EmojiPageMixin, MemoPageMixin, CountdownPageMixin, QMainWind
             side_layout.addWidget(nav_by_index[page_index])
         self.nav_buttons = [nav_by_index[index] for index in range(8)]
         side_layout.addStretch()
-        hint = QLabel("私人效率工具\n数据仅保存在本机")
+        hint = QLabel(f"私人效率工具 {DISPLAY_VERSION}\n数据仅保存在本机")
         hint.setObjectName("sideHint")
         side_layout.addWidget(hint)
         body_layout.addWidget(sidebar)
