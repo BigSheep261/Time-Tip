@@ -10,3 +10,7 @@ installer/
 !TimeTip.build.spec
 *.exe
 ~*
+
+# Versioned installers published on the release branch
+!release/
+!release/*.exe
