@@ -36,7 +36,7 @@ class ReleaseUnavailable(RuntimeError):
 @dataclass(frozen=True)
 class Config:
     repo_url: str = os.environ.get("TIMETIP_REPO_URL", DEFAULT_REPO)
-    branch: str = os.environ.get("TIMETIP_RELEASE_BRANCH", "relese")
+    branch: str = os.environ.get("TIMETIP_RELEASE_BRANCH", "release")
     root: Path = Path(os.environ.get("TIMETIP_UPDATE_ROOT", ".timetip-updates"))
     host: str = os.environ.get("TIMETIP_HOST", "0.0.0.0")
     port: int = int(os.environ.get("TIMETIP_PORT", "8787"))
