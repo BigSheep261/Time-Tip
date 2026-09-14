@@ -1211,7 +1211,11 @@ class TimeTipWindow(EmojiPageMixin, MemoPageMixin, CountdownPageMixin, QMainWind
     def _on_update_available(self, metadata: dict) -> None:
         version = str(metadata.get("version", "")).lstrip("vV").strip()
         notes = str(metadata.get("release_notes", "暂无更新说明。")).strip() or "暂无更新说明。"
-        self.update_feedback.setText(f"发现新版本 V{version}。")
+        source = str(metadata.get("source_label", metadata.get("source", "未知来源")))
+        source_ip = str(metadata.get("source_ip", self.updater.metadata_url.split("/")[2] if "/" in self.updater.metadata_url else "未知"))
+        client_ip = str(metadata.get("client_ip", "未知"))
+        self.update_source.setText(f"更新源 IP：{source_ip} · 客户端 IP：{client_ip} · 安装包来源：{source}")
+        self.update_feedback.setText(f"发现新版本 V{version}，已确认更新源可用。")
         set_feedback_state(self.update_feedback, "success")
         answer = QMessageBox.question(
             self,
@@ -1225,7 +1229,11 @@ class TimeTipWindow(EmojiPageMixin, MemoPageMixin, CountdownPageMixin, QMainWind
             self.update_download_button.setEnabled(False)
             self.updater.download()
 
-    def _on_no_update(self, _metadata: dict) -> None:
+    def _on_no_update(self, metadata: dict) -> None:
+        source = str(metadata.get("source_label", metadata.get("source", "未知来源")))
+        source_ip = str(metadata.get("source_ip", "未知"))
+        client_ip = str(metadata.get("client_ip", "未知"))
+        self.update_source.setText(f"更新源 IP：{source_ip} · 客户端 IP：{client_ip} · 安装包来源：{source}")
         self.update_feedback.setText(f"当前已是最新版本 {DISPLAY_VERSION}。")
         set_feedback_state(self.update_feedback, "success")
 
@@ -1244,7 +1252,7 @@ class TimeTipWindow(EmojiPageMixin, MemoPageMixin, CountdownPageMixin, QMainWind
             Updater.launch_installer(path)
             self.update_progress.setVisible(False)
             self.update_download_button.setEnabled(True)
-            self.update_feedback.setText("安装器已启动，TimeTip 将退出并完成更新。")
+            self.update_feedback.setText("安装器已启动，下载成功，TimeTip 将退出并完成更新。")
             QTimer.singleShot(300, self.quit_app)
         except OSError as error:
             self._on_update_failed(str(error))
@@ -1517,6 +1525,9 @@ class TimeTipWindow(EmojiPageMixin, MemoPageMixin, CountdownPageMixin, QMainWind
         self.update_feedback = QLabel("点击“检查更新”获取最新版本信息。", objectName="cardHint")
         self.update_feedback.setWordWrap(True)
         update_layout.addWidget(self.update_feedback)
+        self.update_source = QLabel("更新源 IP：尚未检查 · 安装包来源：尚未确认", objectName="cardHint")
+        self.update_source.setWordWrap(True)
+        update_layout.addWidget(self.update_source)
         self.update_progress = QProgressBar()
         self.update_progress.setRange(0, 100)
         self.update_progress.setVisible(False)

@@ -5,9 +5,11 @@ import hashlib
 import json
 import os
 import subprocess
+import socket
 import sys
 import tempfile
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -18,24 +20,61 @@ from app.version import APP_VERSION, is_newer
 DEFAULT_UPDATE_URL = "http://47.116.193.23:8787/api/update"
 
 
+def local_ip() -> str:
+    """Return the LAN address used to identify this update request."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect(("47.116.193.23", 80))
+        return sock.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        sock.close()
+
+
 class _UpdateWorker(QThread):
     checked = pyqtSignal(dict)
     downloaded = pyqtSignal(str)
     progress = pyqtSignal(int, int)
     failed = pyqtSignal(str)
 
-    def __init__(self, mode: str, metadata_url: str, package_url: str = "", expected_sha256: str = "") -> None:
+    def __init__(self, mode: str, metadata_url: str, package_url: str = "", expected_sha256: str = "", metadata: dict | None = None) -> None:
         super().__init__()
         self.mode = mode.strip().lower()
         self.metadata_url = metadata_url.strip()
         self.package_url = package_url.strip()
         self.expected_sha256 = expected_sha256.strip().lower()
+        self.metadata = metadata or {}
+        self.client_ip = local_ip()
+
+    def _report(self, success: bool, error: str = "") -> None:
+        """Tell the service whether a download completed and which source was used."""
+        parsed = urllib.parse.urlsplit(self.metadata_url)
+        endpoint = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, "/api/update/status", "", ""))
+        payload = {
+            "client_ip": self.client_ip,
+            "version": str(self.metadata.get("version", "")),
+            "source": str(self.metadata.get("source", "unknown")),
+            "source_label": str(self.metadata.get("source_label", "")),
+            "success": bool(success),
+            "error": error,
+        }
+        try:
+            request = urllib.request.Request(endpoint, data=json.dumps(payload).encode("utf-8"),
+                                             headers={"Content-Type": "application/json", "User-Agent": "TimeTip/" + APP_VERSION}, method="POST")
+            with urllib.request.urlopen(request, timeout=5):
+                pass
+        except OSError:
+            # Reporting must never turn a successful local download into a failure.
+            pass
 
     def run(self) -> None:
         try:
             if self.mode == "check":
+                query = urllib.parse.urlencode({"client_ip": self.client_ip, "current_version": APP_VERSION})
+                separator = "&" if "?" in self.metadata_url else "?"
                 request = urllib.request.Request(
-                    self.metadata_url,
+                    self.metadata_url + separator + query,
                     headers={"User-Agent": "TimeTip/" + APP_VERSION, "Accept": "application/json"},
                 )
                 with urllib.request.urlopen(request, timeout=8) as response:
@@ -53,6 +92,11 @@ class _UpdateWorker(QThread):
                 payload["url"] = url
                 payload["sha256"] = digest
                 payload["has_update"] = is_newer(version, APP_VERSION)
+                parsed = urllib.parse.urlsplit(self.metadata_url)
+                payload["source_ip"] = parsed.hostname or ""
+                payload.setdefault("source", "unknown")
+                payload.setdefault("source_label", "未知来源")
+                payload["client_ip"] = self.client_ip
                 self.checked.emit(payload)
                 return
             if self.mode != "download" or not self.package_url or len(self.expected_sha256) != 64:
@@ -77,8 +121,21 @@ class _UpdateWorker(QThread):
                 if digest.hexdigest().lower() != self.expected_sha256:
                     destination.unlink(missing_ok=True)
                     raise ValueError("安装包校验失败，文件可能已损坏或来源不可信。")
+            self._report(True)
             self.downloaded.emit(str(destination))
+        except urllib.error.HTTPError as error:
+            message = f"更新服务暂不可用（HTTP {error.code}），请联系管理员。"
+            try:
+                payload = json.loads(error.read().decode("utf-8"))
+                message = str(payload.get("error", message))
+            except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                pass
+            if self.mode == "download":
+                self._report(False, message)
+            self.failed.emit(message)
         except (OSError, ValueError, TypeError, urllib.error.URLError, json.JSONDecodeError) as error:
+            if self.mode == "download":
+                self._report(False, str(error))
             self.failed.emit(str(error))
 
 
@@ -115,7 +172,7 @@ class Updater(QObject):
             self.failed.emit("当前没有可下载的新版本。")
             return
         self._worker = _UpdateWorker(
-            "download", self.metadata_url, str(self.metadata.get("url", "")), str(self.metadata.get("sha256", ""))
+            "download", self.metadata_url, str(self.metadata.get("url", "")), str(self.metadata.get("sha256", "")), self.metadata
         )
         self._worker.progress.connect(self.download_progress)
         self._worker.downloaded.connect(self.download_ready)
