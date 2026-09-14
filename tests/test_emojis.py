@@ -159,6 +159,47 @@ class EmojiTests(unittest.TestCase):
         self.show_emojis()
         self.assert_animation_advances(self.window.emoji_grid)
 
+    def test_animated_payload_with_jpg_suffix_is_played_and_not_flattened_on_drag(self):
+        source = self.gif("animated.jpg")
+        self.window._import_emoji_files([source])
+        self.assertEqual(len(self.window.emoji_grid._movies), 1)
+        self.window.emoji_grid.setCurrentRow(0)
+        with patch("app.presentation.emoji_grid.QDrag") as drag_class:
+            self.window.emoji_grid.startDrag(Qt.DropAction.CopyAction)
+            mime = drag_class.return_value.setMimeData.call_args.args[0]
+        self.assertFalse(mime.hasImage())
+        self.assertEqual(Path(mime.urls()[0].toLocalFile()).suffix.lower(), ".jpg")
+
+    def test_sorting_current_category_persists_without_reordering_other_categories(self):
+        first, second = self.image("first.png"), self.image("second.png")
+        self.window._import_emoji_files([first, second])
+        with patch("app.presentation.emojis.QInputDialog.getText", return_value=("工作", True)):
+            self.window._new_emoji_category()
+        self.window._import_emoji_files([self.image("third.png")])
+        self.window._refresh_emoji_categories("default")
+        default_ids = [r["id"] for r in self.window.emojis if r["category_id"] == "default"]
+        other_id = next(r["id"] for r in self.window.emojis if r["category_id"] != "default")
+        self.window._toggle_emoji_reordering(True)
+        self.window._emoji_rows_reordered(default_ids[::-1])
+        self.assertEqual([r["id"] for r in self.window.emojis if r["category_id"] == "default"], default_ids[::-1])
+        self.assertEqual(next(r["id"] for r in self.window.emojis if r["category_id"] != "default"), other_id)
+        self.assertEqual([r["id"] for r in self.store.read_json("emojis", []) if r["category_id"] == "default"], default_ids[::-1])
+
+    def test_standalone_emoji_package_round_trip(self):
+        source = self.image("package.png")
+        self.window._import_emoji_files([source])
+        package = str(Path(self.folder.name) / "emojis.zip")
+        with patch("app.presentation.emojis.QFileDialog.getSaveFileName", return_value=(package, "zip")), \
+             patch("app.presentation.emojis.QMessageBox.information"):
+            self.window._export_emoji_package()
+        self.assertTrue(Path(package).is_file())
+        self.window._delete_selected_emojis()  # no selection: keep original, then import a duplicate package
+        with patch("app.presentation.emojis.QFileDialog.getOpenFileName", return_value=(package, "zip")), \
+             patch("app.presentation.emojis.QMessageBox.information"):
+            self.window._import_emoji_package()
+        self.assertEqual(len(self.window.emojis), 2)
+        self.assertTrue(all((self.window.emoji_root / r["path"]).is_file() for r in self.window.emojis))
+
     def test_gif_pauses_when_hidden_and_releases_players_on_category_switch(self):
         self.window._import_emoji_files([self.gif()])
         grid = self.window.emoji_grid
@@ -246,8 +287,8 @@ class EmojiTests(unittest.TestCase):
             widget = sidebar.layout().itemAt(index).widget()
             if widget is not None and hasattr(widget, "text") and widget.text():
                 labels.append(widget.text())
-        self.assertLess(labels.index("设置"), labels.index("表情包"))
         self.assertLess(labels.index("表情包"), labels.index("看番提醒"))
+        self.assertLess(labels.index("看番提醒"), labels.index("设置"))
         self.window._switch_page(7)
         self.assertIsNotNone(self.window.emoji_grid)
         self.assertTrue(self.window.nav_buttons[7].isChecked())

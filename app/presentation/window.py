@@ -803,8 +803,8 @@ class TimeTipWindow(EmojiPageMixin, MemoPageMixin, CountdownPageMixin, QMainWind
             button.setMinimumHeight(44)
             button.clicked.connect(lambda _checked, i=page_index: self._switch_page(i))
             nav_by_index[page_index] = button
-        # Keep page-index order for state updates while placing 表情包 between 设置 and 看番提醒.
-        for page_index in (0, 1, 2, 3, 4, 5, 7, 6):
+        # Keep page-index order for state updates while placing 设置 at the end.
+        for page_index in (0, 1, 2, 3, 4, 7, 6, 5):
             side_layout.addWidget(nav_by_index[page_index])
         self.nav_buttons = [nav_by_index[index] for index in range(8)]
         side_layout.addStretch()

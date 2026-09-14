@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import shutil
 import uuid
+import zipfile
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
@@ -14,6 +15,7 @@ from PyQt6.QtWidgets import (
 
 from app.presentation.emoji_grid import EmojiGrid
 from app.presentation.widgets import Card
+from app.infrastructure.emoji_transfer import export_emoji_package, read_emoji_package
 
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
@@ -76,6 +78,19 @@ class EmojiPageMixin:
         add_images.setMinimumHeight(44)
         add_images.clicked.connect(self._choose_emoji_files)
         header.addWidget(add_images)
+        self.import_emoji_button = QPushButton("导入表情包", objectName="secondaryButton")
+        self.import_emoji_button.setMinimumHeight(44)
+        self.import_emoji_button.clicked.connect(self._import_emoji_package)
+        header.addWidget(self.import_emoji_button)
+        self.export_emoji_button = QPushButton("导出表情包", objectName="secondaryButton")
+        self.export_emoji_button.setMinimumHeight(44)
+        self.export_emoji_button.clicked.connect(self._export_emoji_package)
+        header.addWidget(self.export_emoji_button)
+        self.emoji_sort_button = QPushButton("调整排序", objectName="secondaryButton")
+        self.emoji_sort_button.setCheckable(True)
+        self.emoji_sort_button.setMinimumHeight(44)
+        self.emoji_sort_button.clicked.connect(self._toggle_emoji_reordering)
+        header.addWidget(self.emoji_sort_button)
         new_category = QPushButton("新建分类", objectName="primaryButton")
         new_category.setMinimumHeight(44)
         new_category.clicked.connect(self._new_emoji_category)
@@ -108,6 +123,7 @@ class EmojiPageMixin:
         self.emoji_grid = EmojiGrid()
         self.emoji_grid.filesDropped.connect(self._import_emoji_files)
         self.emoji_grid.imageDropped.connect(self._import_emoji_image)
+        self.emoji_grid.reordered.connect(self._emoji_rows_reordered)
         self.emoji_grid.itemSelectionChanged.connect(self._update_emoji_actions)
         card_layout.addWidget(self.emoji_grid, 1)
         footer = QHBoxLayout()
@@ -160,6 +176,91 @@ class EmojiPageMixin:
 
     def _update_emoji_actions(self):
         self.delete_emoji_button.setEnabled(bool(self.emoji_grid.selectedItems()))
+
+    def _toggle_emoji_reordering(self, enabled: bool):
+        self.emoji_grid.set_reordering(enabled)
+        self.emoji_sort_button.setText("完成排序" if enabled else "调整排序")
+
+    def _emoji_rows_reordered(self, ordered_ids):
+        current_ids = [record["id"] for record in self.emojis
+                       if record["category_id"] == self.active_emoji_category]
+        if len(ordered_ids) != len(current_ids) or set(ordered_ids) != set(current_ids):
+            return
+        by_id = {record["id"]: record for record in self.emojis}
+        reordered = [by_id[item_id] for item_id in ordered_ids]
+        iterator = iter(reordered)
+        self.emojis = [
+            next(iterator) if record["category_id"] == self.active_emoji_category else record
+            for record in self.emojis
+        ]
+        self.store.write_json("emojis", self.emojis)
+
+    def _export_emoji_package(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出表情包", "TimeTip-表情包.zip", "表情包包 (*.zip)"
+        )
+        if not path:
+            return
+        try:
+            export_emoji_package(path, self.emoji_categories, self.emojis, self.emoji_root)
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, "导出表情包失败", str(error))
+            return
+        QMessageBox.information(self, "导出表情包", "表情包已导出。")
+
+    def _import_emoji_package(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "导入表情包", "", "表情包包 (*.zip)"
+        )
+        if not path:
+            return
+        try:
+            categories, records, assets = read_emoji_package(path)
+        except (OSError, ValueError, zipfile.BadZipFile) as error:
+            QMessageBox.warning(self, "导入表情包失败", str(error))
+            return
+
+        existing_names = {category["name"] for category in self.emoji_categories}
+        category_map = {"default": "default"}
+        imported_categories = 0
+        for category in categories:
+            source_id = category["id"]
+            if source_id == "default":
+                continue
+            name = category["name"]
+            base = name
+            index = 1
+            while name in existing_names:
+                index += 1
+                name = f"{base}（导入{index}）"
+            new_id = uuid.uuid4().hex
+            category_map[source_id] = new_id
+            self.emoji_categories.append({"id": new_id, "name": name[:40]})
+            existing_names.add(name)
+            (self.emoji_root / new_id).mkdir(parents=True, exist_ok=True)
+            imported_categories += 1
+
+        imported_images = 0
+        for record in records:
+            category_id = category_map.get(record["category_id"], "default")
+            source_bytes = assets.get(record["path"])
+            if source_bytes is None:
+                continue
+            suffix = Path(record["path"]).suffix.lower()
+            new_id = uuid.uuid4().hex
+            destination = self.emoji_root / category_id / (new_id + suffix)
+            try:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(source_bytes)
+            except OSError:
+                continue
+            self.emojis.append({"id": new_id, "path": destination.relative_to(self.emoji_root).as_posix(),
+                                "category_id": category_id})
+            imported_images += 1
+        self.store.write_json("emoji_categories", self.emoji_categories)
+        self.store.write_json("emojis", self.emojis)
+        self._refresh_emoji_categories(self.active_emoji_category)
+        QMessageBox.information(self, "导入表情包", f"已导入 {imported_categories} 个分类、{imported_images} 张图片。")
 
     def _choose_emoji_files(self):
         paths, _ = QFileDialog.getOpenFileNames(self, "添加表情包图片", "", "图片文件 (*.png *.jpg *.jpeg *.gif *.webp *.bmp)")
