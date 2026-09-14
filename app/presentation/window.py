@@ -52,6 +52,7 @@ from app.domain.dates import format_dashboard_date, DATE_FORMATS
 from app.presentation.anime_dialog import AnimeDialog, DEFAULT_ANIME_COVER
 from app.presentation.anime_organization import AnimeDragHandle, AnimeGroupsDialog, AnimeListWidget
 from app.presentation.countdowns import CountdownPageMixin
+from app.presentation.memos import MemoPageMixin
 from app.presentation.widgets import Card, DashboardTile, ResizeHandle, WidgetGrid
 from app.infrastructure.store import Store
 from app.infrastructure import startup
@@ -595,7 +596,7 @@ class AnimeFolderDialog(QDialog):
         self.accept()
 
 
-class TimeTipWindow(CountdownPageMixin, QMainWindow):
+class TimeTipWindow(MemoPageMixin, CountdownPageMixin, QMainWindow):
     def __init__(self, store: Store | None = None) -> None:
         super().__init__()
         self.store = store or Store()
@@ -740,14 +741,17 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
         self.activateWindow()
 
     def quit_app(self) -> None:
+        if not self.save_memo():
+            return
         self.quitting = True
-        self.save_memo()
         self.save_window_geometry()
         self.tray.hide()
         QApplication.quit()
 
     def closeEvent(self, event) -> None:
-        self.save_memo()
+        if not self.save_memo():
+            event.ignore()
+            return
         self.save_window_geometry()
         if not self.quitting and self.tray.isVisible():
             self.hide()
@@ -1156,61 +1160,6 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
         label.setWordWrap(True)
         layout.addWidget(label)
 
-    def _memo_page(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(8, 14, 8, 0)
-        layout.setSpacing(14)
-        self._page_header(layout, "备忘录", "一个想法，一条记录。编辑后自动保存，切换时也会保留。")
-        content = QHBoxLayout()
-        content.setSpacing(14)
-        left = Card()
-        left.setMaximumWidth(260)
-        left_layout = QVBoxLayout(left)
-        new = QPushButton("＋ 新建备忘录", objectName="primaryButton")
-        new.clicked.connect(self.add_memo)
-        left_layout.addWidget(new)
-        self.memo_list = QListWidget(objectName="cleanList")
-        self.memo_list.setMinimumWidth(160)
-        self.memo_list.currentItemChanged.connect(self._memo_selected)
-        left_layout.addWidget(self.memo_list, 1)
-        self.delete_memo_button = QPushButton("删除这条备忘录", objectName="secondaryButton")
-        self.delete_memo_button.clicked.connect(self.delete_memo)
-        left_layout.addWidget(self.delete_memo_button)
-        self.undo_memo_button = QPushButton("撤销删除", objectName="secondaryButton")
-        self.undo_memo_button.clicked.connect(self.undo_delete_memo)
-        self.undo_memo_button.hide()
-        left_layout.addWidget(self.undo_memo_button)
-        content.addWidget(left, 1)
-        card = Card()
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(18, 18, 18, 18)
-        card_layout.addWidget(QLabel("标题", objectName="fieldLabel"))
-        self.memo_title = QLineEdit()
-        self.memo_title.setPlaceholderText("给这条记录起个名字")
-        self.memo_title.setMaxLength(120)
-        self.memo_title.textChanged.connect(self._memo_changed)
-        card_layout.addWidget(self.memo_title)
-        card_layout.addWidget(QLabel("内容", objectName="fieldLabel"))
-        self.memo_edit = QTextEdit()
-        self.memo_edit.setAcceptRichText(False)
-        self.memo_edit.setPlaceholderText("点击「新建备忘录」开始记录……")
-        self.memo_edit.textChanged.connect(self._memo_changed)
-        self.memo_timer = QTimer(self)
-        self.memo_timer.setSingleShot(True)
-        self.memo_timer.timeout.connect(self.save_memo)
-        card_layout.addWidget(self.memo_edit, 1)
-        bottom = QHBoxLayout()
-        self.memo_status = QLabel("新建一条备忘录开始记录", objectName="cardHint")
-        bottom.addWidget(self.memo_status, 1)
-        self.memo_save_button = QPushButton("立即保存", objectName="primaryButton")
-        self.memo_save_button.clicked.connect(self.save_memo)
-        bottom.addWidget(self.memo_save_button)
-        card_layout.addLayout(bottom)
-        content.addWidget(card, 3)
-        layout.addLayout(content, 1)
-        return page
-
     def save_date_format(self):
         if not hasattr(self, "date_format_combo"):
             return
@@ -1220,6 +1169,8 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
             self.day_label.setText(format_dashboard_date(datetime.now(), self.date_format))
 
     def export_data(self):
+        if not self.save_memo():
+            return
         path, _ = QFileDialog.getSaveFileName(self, "导出 TimeTip 数据", "TimeTip-backup.zip", "TimeTip 数据包 (*.zip);;JSON 文件 (*.json)")
         if not path: return
         try:
@@ -1229,6 +1180,8 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
     def import_data(self):
         path, _ = QFileDialog.getOpenFileName(self, "导入 TimeTip 数据", "", "TimeTip 数据包 (*.zip *.json);;所有文件 (*.*)")
         if not path: return
+        if not self.save_memo():
+            return
         try:
             self.store.import_data(path)
             self.countdowns = self.store.load_collection("countdowns"); self.memos = self.store.load_collection("memos"); self.anime = self.store.anime()
@@ -1810,108 +1763,6 @@ class TimeTipWindow(CountdownPageMixin, QMainWindow):
         minutes, seconds = divmod(max(0, self.pomodoro_remaining), 60)
         self.focus_time_label.setText(f"{minutes:02d}:{seconds:02d}")
         self.focus_mode_label.setText("专注时段" if self.pomodoro_mode == "work" else "休息时段")
-
-    def _refresh_memo_list(self, selected_id=None):
-        self.memo_list.blockSignals(True)
-        self.memo_list.clear()
-        for memo in self.memos:
-            item = QListWidgetItem(memo["title"] or "未命名备忘录")
-            item.setData(Qt.ItemDataRole.UserRole, memo["id"])
-            item.setToolTip(memo["title"])
-            self.memo_list.addItem(item)
-        self._select_list_id(self.memo_list, selected_id)
-        self.memo_list.blockSignals(False)
-        self._load_memo_editor(selected_id)
-
-    def _load_memo_editor(self, item_id):
-        self.active_memo_id = item_id
-        memo = next((m for m in self.memos if m["id"] == item_id), None)
-        for edit in (self.memo_title, self.memo_edit):
-            edit.blockSignals(True)
-            edit.setEnabled(memo is not None)
-        self.memo_title.setText(memo["title"] if memo else "")
-        self.memo_edit.setPlainText(memo["text"] if memo else "")
-        for edit in (self.memo_title, self.memo_edit):
-            edit.blockSignals(False)
-        self.delete_memo_button.setEnabled(memo is not None)
-        self.memo_save_button.setEnabled(memo is not None)
-        self.memo_status.setText("已自动保存" if memo else "新建一条备忘录开始记录")
-
-    def _memo_selected(self, current, previous=None):
-        self.save_memo()
-        self._load_memo_editor(current.data(Qt.ItemDataRole.UserRole) if current else None)
-
-    def add_memo(self):
-        self.save_memo()
-        item = {"id": uuid.uuid4().hex, "title": "新备忘录", "text": ""}
-        self.memos.append(item)
-        self.store.write_json("memos", self.memos)
-        self._refresh_memo_list(item["id"])
-        self._rebuild_dashboard()
-        self._refresh_widget_settings()
-        self.memo_title.setFocus()
-        self.memo_title.selectAll()
-
-    def delete_memo(self):
-        if not self.active_memo_id:
-            return
-        self.save_memo()
-        self.memo_timer.stop()
-        index = next(i for i, m in enumerate(self.memos) if m["id"] == self.active_memo_id)
-        self.deleted_memo = (index, self.memos[index], self.widget_config.get("memo:" + self.active_memo_id, {}).copy())
-        self.memos.pop(index)
-        self.widget_config.pop("memo:" + self.active_memo_id, None)
-        self.active_memo_id = None
-        self.store.write_json("memos", self.memos)
-        self.store.write_json("widgets", self.widget_config)
-        selected = self.memos[min(index, len(self.memos)-1)]["id"] if self.memos else None
-        self._refresh_memo_list(selected)
-        self._rebuild_dashboard()
-        self._refresh_widget_settings()
-        self.undo_memo_button.show()
-
-    def undo_delete_memo(self):
-        if not self.deleted_memo:
-            return
-        self.save_memo()
-        index, item, config = self.deleted_memo
-        self.memos.insert(index, item)
-        self.widget_config["memo:" + item["id"]] = config
-        self.store.write_json("memos", self.memos)
-        self.store.write_json("widgets", self.widget_config)
-        self._refresh_memo_list(item["id"])
-        self._rebuild_dashboard()
-        self._refresh_widget_settings()
-        self.deleted_memo = None
-        self.undo_memo_button.hide()
-
-    def _memo_changed(self) -> None:
-        if self.active_memo_id:
-            self.memo_status.setText("正在保存…")
-            self.memo_timer.start(500)
-
-    def save_memo(self) -> None:
-        self.memo_timer.stop()
-        memo = next((m for m in self.memos if m["id"] == self.active_memo_id), None)
-        if memo is None:
-            return
-        title, text = self.memo_title.text(), self.memo_edit.toPlainText()
-        title_changed = memo["title"] != title
-        if title_changed or memo["text"] != text:
-            memo.update(title=title, text=text)
-            self.store.write_json("memos", self.memos)
-            for row in range(self.memo_list.count()):
-                item = self.memo_list.item(row)
-                if item.data(Qt.ItemDataRole.UserRole) == memo["id"]:
-                    item.setText(title or "未命名备忘录")
-                    item.setToolTip(title)
-            tile = self.tiles.get("memo:" + memo["id"])
-            if tile:
-                tile.title_label.setText(title or "未命名备忘录")
-            if title_changed:
-                self._refresh_widget_settings()
-            self._render_dashboard(datetime.now())
-        self.memo_status.setText("已自动保存")
 
     def _update_summary(self) -> None:
         self._render_dashboard(datetime.now())

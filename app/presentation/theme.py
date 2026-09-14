@@ -134,6 +134,15 @@ QDateTimeEdit:focus, QTimeEdit:focus, QLineEdit:focus, QSpinBox:focus, QDoubleSp
 #primaryButton:pressed {{ background: {primary_pressed}; }}
 #secondaryButton {{ background: {secondary}; color: {secondary_text}; border: none; border-radius: 10px; padding: 8px 16px; font-weight: 600; }}
 #secondaryButton:hover {{ background: {secondary_hover}; }}
+#memoFormatToolbar {{ background: transparent; border: none; spacing: 1px; padding: 0; }}
+#memoFormatToolbar QToolButton {{ background: transparent; color: {secondary_text}; border: none; border-radius: 6px; min-width: 26px; min-height: 34px; padding: 0 2px; }}
+#memoFormatToolbar QToolButton:hover {{ background: {hover}; }}
+#memoFormatToolbar QToolButton:checked {{ background: {accent_soft}; color: {primary}; }}
+#memoFormatToolbar QToolButton:disabled {{ color: {disabled_text}; background: transparent; }}
+#memoFormatToolbar QToolButton:focus {{ border: 1px solid {focus_ring}; }}
+#memoFormatToolbar QToolButton::menu-indicator {{ image: none; width: 0; }}
+#memoFormatToolbar::separator {{ width: 1px; margin: 8px 2px; background: {border}; }}
+#memoFontCombo, #memoFontSize {{ min-height: 36px; padding: 4px 7px; border-radius: 8px; }}
 #statTitle {{ color: {muted}; font-size: 12px; font-weight: 600; }}
 #statValue {{ font-size: 22px; font-weight: 750; color: {primary}; }}
 #cleanList {{ border: none; background: transparent; }}
