@@ -53,6 +53,7 @@ from app.presentation.anime_dialog import AnimeDialog, DEFAULT_ANIME_COVER
 from app.presentation.anime_organization import AnimeDragHandle, AnimeGroupsDialog, AnimeListWidget
 from app.presentation.countdowns import CountdownPageMixin
 from app.presentation.memos import MemoPageMixin
+from app.presentation.emojis import EmojiPageMixin
 from app.presentation.widgets import Card, DashboardTile, ResizeHandle, WidgetGrid
 from app.infrastructure.store import Store
 from app.infrastructure import startup
@@ -596,7 +597,7 @@ class AnimeFolderDialog(QDialog):
         self.accept()
 
 
-class TimeTipWindow(MemoPageMixin, CountdownPageMixin, QMainWindow):
+class TimeTipWindow(EmojiPageMixin, MemoPageMixin, CountdownPageMixin, QMainWindow):
     def __init__(self, store: Store | None = None) -> None:
         super().__init__()
         self.store = store or Store()
@@ -795,17 +796,17 @@ class TimeTipWindow(MemoPageMixin, CountdownPageMixin, QMainWindow):
         side_layout.addWidget(side_label)
         self.nav_buttons: list[QPushButton] = []
         nav_by_index = {}
-        for text, page_index in [("概览", 0), ("日历提醒", 1), ("番茄钟", 2), ("备忘录", 3), ("倒计时", 4), ("设置", 5), ("看番提醒", 6)]:
+        for text, page_index in [("概览", 0), ("日历提醒", 1), ("番茄钟", 2), ("备忘录", 3), ("倒计时", 4), ("设置", 5), ("表情包", 7), ("看番提醒", 6)]:
             button = QPushButton(text)
             button.setObjectName("navButton")
             button.setCheckable(True)
             button.setMinimumHeight(44)
             button.clicked.connect(lambda _checked, i=page_index: self._switch_page(i))
             nav_by_index[page_index] = button
-        # Keep page-index order for state updates while placing 看番提醒 above 设置 visually.
-        for page_index in (0, 1, 2, 3, 4, 6, 5):
+        # Keep page-index order for state updates while placing 表情包 between 设置 and 看番提醒.
+        for page_index in (0, 1, 2, 3, 4, 5, 7, 6):
             side_layout.addWidget(nav_by_index[page_index])
-        self.nav_buttons = [nav_by_index[index] for index in range(7)]
+        self.nav_buttons = [nav_by_index[index] for index in range(8)]
         side_layout.addStretch()
         hint = QLabel("私人效率工具\n数据仅保存在本机")
         hint.setObjectName("sideHint")
@@ -820,6 +821,7 @@ class TimeTipWindow(MemoPageMixin, CountdownPageMixin, QMainWindow):
         self.pages.addWidget(self._countdowns_page())
         self.pages.addWidget(self._settings_page())
         self.pages.addWidget(self._anime_page())
+        self.pages.addWidget(self._emoji_page())
         body_layout.addWidget(self.pages, 1)
         root_layout.addWidget(body, 1)
         self.setCentralWidget(root)

@@ -8,7 +8,7 @@ from app.domain.anime import normalize_tags, validate_anime
 
 class DataStore:
     KEYS = ("work", "break", "salary", "widgets", "window_geometry", "date_format", "theme", "target", "target_notified", "memo")
-    COLLECTIONS = ("countdowns", "memos", "reminders", "anime", "anime_groups")
+    COLLECTIONS = ("countdowns", "memos", "reminders", "anime", "anime_groups", "emojis", "emoji_categories")
     def __init__(self, root: str | None = None):
         configured = os.environ.get("TIMETIP_DATA_DIR")
         if root: self.root = Path(root)
@@ -97,6 +97,13 @@ class DataStore:
                     if cover:
                         source = Path(cover)
                         if source.is_file() and source.resolve().is_relative_to(self.covers.resolve()): archive.write(source, "covers/" + source.name)
+                root = (self.root / "emojis").resolve()
+                for record in payload["collections"].get("emojis", []):
+                    if not isinstance(record, dict): continue
+                    relative = Path(str(record.get("path", "")))
+                    source = (root / relative).resolve()
+                    if not relative.is_absolute() and ".." not in relative.parts and source.is_file() and source.is_relative_to(root):
+                        archive.write(source, "emojis/" + relative.as_posix())
         else: destination.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     def import_data(self, path: str) -> None:
         source = Path(path)
@@ -109,6 +116,13 @@ class DataStore:
                     if name.startswith("covers/") and not name.endswith("/"):
                         safe = Path(name).name
                         (self.covers / safe).write_bytes(archive.read(name))
+                    elif name.startswith("emojis/") and not name.endswith("/"):
+                        relative = Path(name[7:])
+                        root = (self.root / "emojis").resolve()
+                        destination = (root / relative).resolve()
+                        if not relative.is_absolute() and ".." not in relative.parts and destination.is_relative_to(root):
+                            destination.parent.mkdir(parents=True, exist_ok=True)
+                            destination.write_bytes(archive.read(name))
         else: payload = json.loads(source.read_text(encoding="utf-8"))
         if not isinstance(payload, dict) or not isinstance(payload.get("settings"), dict) or not isinstance(payload.get("collections"), dict): raise ValueError("数据文件格式不受支持。")
         for item in payload["collections"].get("anime", []):

@@ -68,24 +68,41 @@ class Store:
         payload = {"version": 2, "settings": {}, "collections": {}}
         for key in ("work", "break", "salary", "widgets", "window_geometry", "date_format", "theme", "target", "target_notified", "memo"):
             payload["settings"][key] = self.get(key, "")
-        for key in ("countdowns", "memos", "reminders", "anime", "anime_groups"):
+        for key in ("countdowns", "memos", "reminders", "anime", "anime_groups", "emojis", "emoji_categories"):
             payload["collections"][key] = self.read_json(key, [])
         if Path(path).suffix.lower() == ".zip":
-            with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive: archive.writestr("data.json", json.dumps(payload, ensure_ascii=False, indent=2))
+            with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("data.json", json.dumps(payload, ensure_ascii=False, indent=2))
+                root = self.asset_root("emojis").resolve()
+                for record in payload["collections"].get("emojis", []):
+                    if not isinstance(record, dict): continue
+                    relative = Path(str(record.get("path", "")))
+                    source = (root / relative).resolve()
+                    if not relative.is_absolute() and ".." not in relative.parts and source.is_file() and source.is_relative_to(root):
+                        archive.write(source, "emojis/" + relative.as_posix())
         else: Path(path).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def import_data(self, path: str) -> None:
         if self._backend:
             self._backend.import_data(path); return
         if Path(path).suffix.lower() == ".zip":
-            with zipfile.ZipFile(path) as archive: payload = json.loads(archive.read("data.json").decode("utf-8"))
+            with zipfile.ZipFile(path) as archive:
+                payload = json.loads(archive.read("data.json").decode("utf-8"))
+                root = self.asset_root("emojis").resolve()
+                for name in archive.namelist():
+                    if not name.startswith("emojis/") or name.endswith("/"): continue
+                    relative = Path(name[7:])
+                    destination = (root / relative).resolve()
+                    if not relative.is_absolute() and ".." not in relative.parts and destination.is_relative_to(root):
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        destination.write_bytes(archive.read(name))
         else: payload = json.loads(Path(path).read_text(encoding="utf-8"))
         if not isinstance(payload, dict) or not isinstance(payload.get("settings"), dict) or not isinstance(payload.get("collections"), dict):
             raise ValueError("数据文件格式不受支持。")
         for key, value in payload["settings"].items():
             if key in ("work", "break", "salary", "widgets", "window_geometry", "date_format", "theme", "target", "target_notified", "memo"): self.set(key, value)
         for key, value in payload["collections"].items():
-            if key in ("countdowns", "memos", "reminders", "anime", "anime_groups"): self.write_json(key, value)
+            if key in ("countdowns", "memos", "reminders", "anime", "anime_groups", "emojis", "emoji_categories"): self.write_json(key, value)
 
     def save_anime(self, items: list[dict]) -> None:
         if self._backend: self._backend.save_anime(items); return
@@ -112,6 +129,15 @@ class Store:
     def write_json(self, key, value):
         if self._backend: self._backend.write_json(key, value); return
         self.set(key, json.dumps(value, ensure_ascii=False))
+
+    def asset_root(self, name: str) -> Path:
+        """Return a persistent local directory for binary user assets."""
+        if self._backend:
+            root = self._backend.root / name
+        else:
+            root = Path(self.settings.fileName()).resolve().parent / name
+        root.mkdir(parents=True, exist_ok=True)
+        return root
 
     def migrate_collections(self):
         if self._backend:
