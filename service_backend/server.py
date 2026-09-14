@@ -249,3 +249,4 @@ def serve(config: Config | None = None) -> None:
 if __name__ == "__main__":
     logging.basicConfig(level=os.environ.get("TIMETIP_LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
     serve()
+
