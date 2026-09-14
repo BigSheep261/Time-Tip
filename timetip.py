@@ -2,6 +2,7 @@
 from app.bootstrap import main
 from app.infrastructure.store import Store
 from app.presentation.window import TimeTipWindow, make_app_icon
+from app.version import APP_VERSION, DISPLAY_VERSION
 from app.presentation.theme import (APP_NAME, STYLESHEET, Theme, available_themes,
                                     build_stylesheet, register_theme)
 

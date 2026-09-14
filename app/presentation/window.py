@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 import os
 import re
+import sys
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -35,6 +36,7 @@ from PyQt6.QtWidgets import (
     QSizeGrip,
     QSizePolicy,
     QSpinBox,
+    QProgressBar,
     QStackedWidget,
     QTextEdit,
     QTimeEdit,
@@ -57,6 +59,8 @@ from app.presentation.emojis import EmojiPageMixin
 from app.presentation.widgets import Card, DashboardTile, ResizeHandle, WidgetGrid
 from app.infrastructure.store import Store
 from app.infrastructure import startup
+from app.infrastructure.updater import Updater
+from app.version import DISPLAY_VERSION
 from app.presentation.theme import (APP_NAME, PRIMARY, apply_theme, available_themes,
                                      get_theme, set_feedback_state)
 
@@ -634,6 +638,12 @@ class TimeTipWindow(EmojiPageMixin, MemoPageMixin, CountdownPageMixin, QMainWind
         except (ValueError, TypeError, KeyError):
             self.salary_config = DEFAULT_SALARY.copy()
         self.quitting = False
+        self.updater = Updater(self)
+        self.updater.update_available.connect(self._on_update_available)
+        self.updater.no_update.connect(self._on_no_update)
+        self.updater.download_progress.connect(self._on_update_progress)
+        self.updater.download_ready.connect(self._on_update_downloaded)
+        self.updater.failed.connect(self._on_update_failed)
         self.tray = QSystemTrayIcon(self.windowIcon(), self)
         self.tray.setToolTip(APP_NAME)
         menu = QMenu(self)
@@ -1191,6 +1201,66 @@ class TimeTipWindow(EmojiPageMixin, MemoPageMixin, CountdownPageMixin, QMainWind
             self._load_settings(); self.data_transfer_feedback.setText("数据已导入，界面已刷新。")
         except (OSError, ValueError, TypeError) as error: self.data_transfer_feedback.setText("导入失败：" + str(error))
 
+    def check_for_updates(self) -> None:
+        if not hasattr(self, "update_feedback"):
+            return
+        self.update_feedback.setText("正在检查更新…")
+        set_feedback_state(self.update_feedback, "info")
+        self.updater.check()
+
+    def _on_update_available(self, metadata: dict) -> None:
+        version = str(metadata.get("version", "")).lstrip("vV").strip()
+        notes = str(metadata.get("release_notes", "暂无更新说明。")).strip() or "暂无更新说明。"
+        self.update_feedback.setText(f"发现新版本 V{version}。")
+        set_feedback_state(self.update_feedback, "success")
+        answer = QMessageBox.question(
+            self,
+            "TimeTip 更新",
+            f"发现新版本 V{version}。\n\n{notes}\n\n现在下载并安装吗？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.update_progress.setVisible(True)
+            self.update_progress.setValue(0)
+            self.update_download_button.setEnabled(False)
+            self.updater.download()
+
+    def _on_no_update(self, _metadata: dict) -> None:
+        self.update_feedback.setText(f"当前已是最新版本 {DISPLAY_VERSION}。")
+        set_feedback_state(self.update_feedback, "success")
+
+    def _on_update_progress(self, received: int, total: int) -> None:
+        self.update_progress.setVisible(True)
+        if total > 0:
+            self.update_progress.setRange(0, 100)
+            self.update_progress.setValue(min(100, int(received * 100 / total)))
+            self.update_feedback.setText(f"正在下载更新… {received / 1024 / 1024:.1f} / {total / 1024 / 1024:.1f} MB")
+        else:
+            self.update_progress.setRange(0, 0)
+            self.update_feedback.setText(f"正在下载更新… {received / 1024 / 1024:.1f} MB")
+
+    def _on_update_downloaded(self, path: str) -> None:
+        try:
+            Updater.launch_installer(path)
+            self.update_progress.setVisible(False)
+            self.update_download_button.setEnabled(True)
+            self.update_feedback.setText("安装器已启动，TimeTip 将退出并完成更新。")
+            QTimer.singleShot(300, self.quit_app)
+        except OSError as error:
+            self._on_update_failed(str(error))
+
+    def _on_update_failed(self, message: str) -> None:
+        if hasattr(self, "update_progress"):
+            self.update_progress.setVisible(False)
+        if hasattr(self, "update_download_button"):
+            self.update_download_button.setEnabled(True)
+        if hasattr(self, "update_feedback"):
+            set_feedback_state(self.update_feedback, "error")
+            self.update_feedback.setText("更新失败：" + message)
+
+    def _save_update_auto_check(self, enabled: bool) -> None:
+        self.store.set("update_auto_check", "1" if enabled else "0")
+
     def _anime_page(self):
         page = QWidget(); layout = QVBoxLayout(page); layout.setContentsMargins(8, 14, 8, 8); layout.setSpacing(14)
         self._page_header(layout, "看番提醒", "按开始日期、每周更新日和集数自动计算每一话日期；只在日历显示。")
@@ -1431,6 +1501,27 @@ class TimeTipWindow(EmojiPageMixin, MemoPageMixin, CountdownPageMixin, QMainWind
         self.startup_feedback.setWordWrap(True)
         startup_layout.addWidget(self.startup_feedback)
         layout.addWidget(startup_card)
+        update_card = Card()
+        update_layout = QVBoxLayout(update_card)
+        update_layout.setContentsMargins(20, 14, 20, 14)
+        update_row = QHBoxLayout()
+        update_row.addWidget(QLabel("软件更新", objectName="cardTitle"))
+        self.update_download_button = QPushButton("检查更新", objectName="secondaryButton")
+        self.update_download_button.clicked.connect(self.check_for_updates)
+        update_row.addWidget(self.update_download_button)
+        self.update_auto_check = QCheckBox("启动时自动检查更新")
+        self.update_auto_check.setAccessibleName("自动检查更新")
+        self.update_auto_check.toggled.connect(self._save_update_auto_check)
+        update_row.addWidget(self.update_auto_check)
+        update_layout.addLayout(update_row)
+        self.update_feedback = QLabel("点击“检查更新”获取最新版本信息。", objectName="cardHint")
+        self.update_feedback.setWordWrap(True)
+        update_layout.addWidget(self.update_feedback)
+        self.update_progress = QProgressBar()
+        self.update_progress.setRange(0, 100)
+        self.update_progress.setVisible(False)
+        update_layout.addWidget(self.update_progress)
+        layout.addWidget(update_card)
         transfer_card = Card()
         transfer_row = QHBoxLayout(transfer_card); transfer_row.setContentsMargins(20, 14, 20, 14)
         transfer_row.addWidget(QLabel("数据备份", objectName="cardTitle"))
@@ -1612,6 +1703,12 @@ class TimeTipWindow(EmojiPageMixin, MemoPageMixin, CountdownPageMixin, QMainWind
         self.startup_check.blockSignals(True)
         self.startup_check.setChecked(startup.is_startup_enabled())
         self.startup_check.blockSignals(False)
+        auto_check = self.store.get("update_auto_check", "1") == "1"
+        self.update_auto_check.blockSignals(True)
+        self.update_auto_check.setChecked(auto_check)
+        self.update_auto_check.blockSignals(False)
+        if auto_check and getattr(sys, "frozen", False):
+            QTimer.singleShot(1200, self.check_for_updates)
         self._refresh_countdown_lists()
         self._refresh_anime_list()
         self._refresh_memo_list(self.memos[0]["id"] if self.memos else None)

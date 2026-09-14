@@ -66,7 +66,7 @@ class Store:
         if self._backend:
             self._backend.export_data(path); return
         payload = {"version": 2, "settings": {}, "collections": {}}
-        for key in ("work", "break", "salary", "widgets", "window_geometry", "date_format", "theme", "target", "target_notified", "memo"):
+        for key in ("work", "break", "salary", "widgets", "window_geometry", "date_format", "theme", "target", "target_notified", "memo", "update_auto_check"):
             payload["settings"][key] = self.get(key, "")
         for key in ("countdowns", "memos", "reminders", "anime", "anime_groups", "emojis", "emoji_categories"):
             payload["collections"][key] = self.read_json(key, [])
@@ -100,7 +100,7 @@ class Store:
         if not isinstance(payload, dict) or not isinstance(payload.get("settings"), dict) or not isinstance(payload.get("collections"), dict):
             raise ValueError("数据文件格式不受支持。")
         for key, value in payload["settings"].items():
-            if key in ("work", "break", "salary", "widgets", "window_geometry", "date_format", "theme", "target", "target_notified", "memo"): self.set(key, value)
+            if key in ("work", "break", "salary", "widgets", "window_geometry", "date_format", "theme", "target", "target_notified", "memo", "update_auto_check"): self.set(key, value)
         for key, value in payload["collections"].items():
             if key in ("countdowns", "memos", "reminders", "anime", "anime_groups", "emojis", "emoji_categories"): self.write_json(key, value)
 

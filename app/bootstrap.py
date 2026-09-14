@@ -8,10 +8,12 @@ from app.infrastructure.single_instance import SingleInstanceGuard
 from app.infrastructure.store import Store
 from app.presentation.window import TimeTipWindow, make_app_icon
 from app.presentation.theme import APP_NAME, STYLESHEET
+from app.version import APP_VERSION
 
 def main() -> None:
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
+    app.setApplicationVersion(APP_VERSION)
     app.setOrganizationName("TimeTip")
     # Isolated profile for packaged integration tests; normal launches keep the existing registry.
     profile = os.environ.get("TIMETIP_TEST_PROFILE")
