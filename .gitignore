@@ -10,3 +10,6 @@ installer/
 !TimeTip.build.spec
 *.exe
 ~*
+
+# Local git worktrees
+workspaces/
