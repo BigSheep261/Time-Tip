@@ -1,1 +1,0 @@
-"""Qt windows and widgets."""

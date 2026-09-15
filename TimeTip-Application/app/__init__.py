@@ -1,1 +1,0 @@
-"""TimeTip layered application package."""
