@@ -1,1 +1,0 @@
-# The update service uses only Python's standard library.

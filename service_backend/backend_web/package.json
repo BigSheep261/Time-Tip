@@ -1,0 +1,9 @@
+{
+  "name": "time-tip-service-web",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {"dev": "vite --host 0.0.0.0 --port 8788", "build": "vite build", "preview": "vite preview --host 0.0.0.0 --port 8788"},
+  "dependencies": {"@vitejs/plugin-vue": "latest", "vite": "latest", "vue": "latest"},
+  "devDependencies": {}
+}
