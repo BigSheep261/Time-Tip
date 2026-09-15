@@ -1,4 +1,5 @@
 import sqlite3
+import re
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from .config import DB_PATH
@@ -21,12 +22,49 @@ def list_packages(limit=100):
 def latest_package():
     with connection() as conn:
         row = conn.execute("SELECT * FROM packages WHERE is_latest=1 ORDER BY created_at DESC LIMIT 1").fetchone()
-        if not row: row = conn.execute("SELECT * FROM packages ORDER BY created_at DESC LIMIT 1").fetchone()
+        if row: return dict(row)
+        rows = conn.execute("SELECT * FROM packages").fetchall()
+        def key(r):
+            m = re.fullmatch(r'V(\d+)\.(\d+)\.(\d+)', r['version'] or '')
+            return tuple(int(x) for x in m.groups()) if m else (-1, -1, -1)
+        return dict(max(rows, key=key)) if rows else None
+def set_latest(package_id):
+    with connection() as conn:
+        row = conn.execute("SELECT os, arch FROM packages WHERE id=?", (package_id,)).fetchone()
+        if not row: return False
+        conn.execute("UPDATE packages SET is_latest=0 WHERE os=? AND arch=?", (row['os'], row['arch']))
+        conn.execute("UPDATE packages SET is_latest=1 WHERE id=?", (package_id,))
+        return True
+def get_package(package_id):
+    with connection() as conn:
+        row = conn.execute("SELECT * FROM packages WHERE id=?", (package_id,)).fetchone()
         return dict(row) if row else None
+def delete_package(package_id):
+    with connection() as conn:
+        row = conn.execute("SELECT * FROM packages WHERE id=?", (package_id,)).fetchone()
+        if not row: return None
+        conn.execute("DELETE FROM packages WHERE id=?", (package_id,))
+        if row['is_latest']:
+            remaining = conn.execute("SELECT id, version FROM packages WHERE os=? AND arch=?", (row['os'], row['arch'])).fetchall()
+            if remaining:
+                def key(r):
+                    m = re.fullmatch(r'V(\d+)\.(\d+)\.(\d+)', r['version'] or '')
+                    return tuple(int(x) for x in m.groups()) if m else (-1, -1, -1)
+                conn.execute("UPDATE packages SET is_latest=1 WHERE id=?", (max(remaining, key=key)['id'],))
+        return dict(row)
+def package_exists(version, filename, os_name='windows', arch='x64'):
+    with connection() as conn:
+        return conn.execute("SELECT id FROM packages WHERE version=? AND filename=? AND os=? AND arch=?", (version, filename, os_name, arch)).fetchone() is not None
 def add_package(version, filename, source, path, os_name='windows', arch='x64', notes=''):
     with connection() as conn:
-        conn.execute("UPDATE packages SET is_latest=0 WHERE os=? AND arch=?", (os_name, arch))
-        cur = conn.execute("INSERT INTO packages(version,filename,source,path,os,arch,release_notes,created_at,is_latest) VALUES(?,?,?,?,?,?,?,?,1)", (version, filename, source, str(path), os_name, arch, notes, utc_now()))
+        current = conn.execute("SELECT version FROM packages WHERE os=? AND arch=? AND is_latest=1 LIMIT 1", (os_name, arch)).fetchone()
+        def key(v):
+            m = re.fullmatch(r'V(\d+)\.(\d+)\.(\d+)', v or '')
+            return tuple(int(x) for x in m.groups()) if m else (-1, -1, -1)
+        make_latest = current is None or key(version) > key(current['version'])
+        if make_latest:
+            conn.execute("UPDATE packages SET is_latest=0 WHERE os=? AND arch=?", (os_name, arch))
+        cur = conn.execute("INSERT INTO packages(version,filename,source,path,os,arch,release_notes,created_at,is_latest) VALUES(?,?,?,?,?,?,?,?,?)", (version, filename, source, str(path), os_name, arch, notes, utc_now(), int(make_latest)))
         return cur.lastrowid
 def log_download(package_id, client_version, client_ip, success=True):
     with connection() as conn: conn.execute("INSERT INTO download_logs(package_id,client_version,client_ip,success,created_at) VALUES(?,?,?,?,?)", (package_id, client_version, client_ip, int(success), utc_now()))
