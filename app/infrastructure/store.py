@@ -68,7 +68,7 @@ class Store:
         payload = {"version": 2, "settings": {}, "collections": {}}
         for key in ("work", "break", "salary", "widgets", "window_geometry", "date_format", "theme", "target", "target_notified", "memo", "update_auto_check"):
             payload["settings"][key] = self.get(key, "")
-        for key in ("countdowns", "memos", "reminders", "anime", "anime_groups", "emojis", "emoji_categories"):
+        for key in ("countdowns", "memos", "reminders", "anime", "anime_groups", "emojis", "emoji_categories", "jm_favorites"):
             payload["collections"][key] = self.read_json(key, [])
         if Path(path).suffix.lower() == ".zip":
             with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -102,7 +102,7 @@ class Store:
         for key, value in payload["settings"].items():
             if key in ("work", "break", "salary", "widgets", "window_geometry", "date_format", "theme", "target", "target_notified", "memo", "update_auto_check"): self.set(key, value)
         for key, value in payload["collections"].items():
-            if key in ("countdowns", "memos", "reminders", "anime", "anime_groups", "emojis", "emoji_categories"): self.write_json(key, value)
+            if key in ("countdowns", "memos", "reminders", "anime", "anime_groups", "emojis", "emoji_categories", "jm_favorites"): self.write_json(key, value)
 
     def save_anime(self, items: list[dict]) -> None:
         if self._backend: self._backend.save_anime(items); return
