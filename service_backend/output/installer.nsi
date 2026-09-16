@@ -36,7 +36,6 @@ copy_files:
   File /r "..\backend_web\dist\*.*"
   SetOutPath "$INSTDIR"
   CreateDirectory "$INSTDIR\ProgramData\database"
-  CreateDirectory "$INSTDIR\ProgramData\packages\github"
   CreateDirectory "$INSTDIR\ProgramData\packages\manual"
   CreateDirectory "$INSTDIR\ProgramData\logs"
   ExecWait '"$INSTDIR\service_core\TimeTipCore.exe" --init-config' $0

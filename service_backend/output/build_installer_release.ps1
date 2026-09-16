@@ -24,6 +24,9 @@ if (-not $SkipDependencies) {
     & $PythonExe -m pip install -r (Join-Path $Core 'requirements.txt')
     Assert-Exit 'Python dependencies'
 }
+# Verify runtime imports even when dependency installation is skipped.
+& $PythonExe -c "import flask, flask_cors, dotenv, waitress, sqlite3, PyInstaller"
+Assert-Exit 'Python runtime dependencies'
 Push-Location $Web
 try {
     if (-not $SkipDependencies) {
@@ -36,7 +39,7 @@ try {
 } finally { Pop-Location }
 & $PythonExe -m compileall -q $Core
 Assert-Exit 'Python syntax'
-& $PythonExe -m PyInstaller --noconfirm --onedir --name TimeTipCore --paths $Root --distpath (Join-Path $Build 'dist') --workpath (Join-Path $Build 'pyinstaller') --specpath $Build (Join-Path $Core 'run_core_bootstrap.py')
+& $PythonExe -m PyInstaller --clean --noconfirm --onedir --name TimeTipCore --paths $Root --distpath (Join-Path $Build 'dist') --workpath (Join-Path $Build 'pyinstaller') --specpath $Build (Join-Path $Core 'run_core_bootstrap.py')
 Assert-Exit 'Core packaging'
 $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 & $csc /nologo /target:exe /platform:x64 /optimize+ /reference:System.ServiceProcess.dll ("/out:" + (Join-Path $Build 'TimeTipService.exe')) (Join-Path $Core 'windows_service.cs')

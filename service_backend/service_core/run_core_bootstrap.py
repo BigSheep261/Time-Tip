@@ -14,7 +14,7 @@ def initialize_config():
     web_env.parent.mkdir(parents=True, exist_ok=True)
     existing = dotenv_values(core_env) if core_env.exists() else {}
     if not core_env.exists():
-        core_env.write_text("CORE_HOST=0.0.0.0\nCORE_PORT=8787\nWEB_HOST=0.0.0.0\nWEB_PORT=8788\nTOKEN_SECRET=" + secrets.token_urlsafe(48) + "\nGITHUB_REPO=BigSheep261/Time-Tip\nGITHUB_BRANCH=release\nGITHUB_TOKEN=\nPACKAGE_EXTENSIONS=.exe\nCLIENT_OS=windows\nCLIENT_ARCH=x64\n", encoding="utf-8")
+        core_env.write_text("CORE_HOST=0.0.0.0\nCORE_PORT=8787\nWEB_HOST=0.0.0.0\nWEB_PORT=8788\nTOKEN_SECRET=" + secrets.token_urlsafe(48) + "\nCLIENT_OS=windows\nCLIENT_ARCH=x64\n", encoding="utf-8")
     if not web_env.exists():
         username = existing.get("AUTH_USERNAME") or "admin"
         password = existing.get("AUTH_PASSWORD") or secrets.token_urlsafe(18)
