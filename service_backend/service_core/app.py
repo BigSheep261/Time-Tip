@@ -4,7 +4,10 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from .config import CORE_HOST, CORE_PORT, MANUAL_PACKAGE_DIR, CLIENT_OS, CLIENT_ARCH
 from .auth import login_ok, issue_token, require_auth
-from .db import init_db, list_packages, latest_package, add_package, log_download, stats
+from .db import init_db, list_packages, latest_package, add_package, log_download, stats, set_latest, delete_package, package_exists
+import re
+
+VERSION_RE = re.compile(r'^V\d+\.\d+\.\d+$')
 from .github_sync import sync_github
 from .web_process import start_web
 
@@ -44,16 +47,45 @@ def sync():
 @require_auth
 def upload():
     file = request.files.get('file')
-    version = request.form.get('version', 'unknown')
+    version = (request.form.get('version') or '').strip()
     if not file or not file.filename:
         return jsonify({"error": "file is required"}), 400
     name = secure_filename(file.filename)
     if Path(name).suffix.lower() != '.exe':
         return jsonify({"error": "only .exe packages are supported"}), 400
-    target = MANUAL_PACKAGE_DIR / name
+    if not VERSION_RE.fullmatch(version):
+        return jsonify({"error": "version must match VX.X.X, for example V1.4.7"}), 400
+    if package_exists(version, name, CLIENT_OS, CLIENT_ARCH):
+        return jsonify({"error": "this package has already been uploaded", "duplicate": True}), 409
+    version_dir = MANUAL_PACKAGE_DIR / version
+    version_dir.mkdir(parents=True, exist_ok=True)
+    target = version_dir / name
+    if target.exists():
+        return jsonify({"error": "this package has already been uploaded", "duplicate": True}), 409
     file.save(target)
     package_id = add_package(version, name, 'manual', target, CLIENT_OS, CLIENT_ARCH, request.form.get('release_notes', ''))
     return jsonify({"ok": True, "id": package_id, "filename": name})
+
+@app.delete('/api/admin/packages/<int:package_id>')
+@require_auth
+def remove_package(package_id):
+    package = delete_package(package_id)
+    if not package:
+        return jsonify({"error": "package not found"}), 404
+    try:
+        path = Path(package['path'])
+        if path.exists(): path.unlink()
+        if path.parent.name == package['version'] and not any(path.parent.iterdir()): path.parent.rmdir()
+    except OSError:
+        pass
+    return jsonify({"ok": True})
+
+@app.post('/api/admin/packages/<int:package_id>/latest')
+@require_auth
+def mark_latest(package_id):
+    if not set_latest(package_id):
+        return jsonify({"error": "package not found"}), 404
+    return jsonify({"ok": True, "id": package_id})
 
 @app.get('/api/client/update/check')
 def client_check():
