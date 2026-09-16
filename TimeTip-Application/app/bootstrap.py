@@ -38,6 +38,7 @@ def main() -> None:
     window = TimeTipWindow(Store(profile))
     guard.show_requested.connect(window.restore_window)
     guard.quit_requested.connect(window.quit_app)
+    app.aboutToQuit.connect(window.jm_wait_for_shutdown)
     app.aboutToQuit.connect(guard.close)
     window.show()
     sys.exit(app.exec())

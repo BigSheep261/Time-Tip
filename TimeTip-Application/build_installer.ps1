@@ -9,7 +9,8 @@ try {
         # but still miss the Qt/PyInstaller build dependencies.
         $pythonCandidates = @(
             (Join-Path $PSScriptRoot '.conda-build\python.exe'),
-            (Join-Path $PSScriptRoot '.venv\Scripts\python.exe')
+            (Join-Path $PSScriptRoot '.venv\Scripts\python.exe'),
+            (Join-Path $PSScriptRoot '..\.venv\Scripts\python.exe')
         )
         $PythonExe = $pythonCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
         if (-not $PythonExe) { $PythonExe = (Get-Command python -ErrorAction Stop).Source }
@@ -22,9 +23,9 @@ try {
     # while PyInstaller resolves dependencies, otherwise the packaged app can
     # fail before the Qt event loop starts.
     $condaLibraryBin = Join-Path $pythonDir 'Library\bin'
-    & $PythonExe -c "import PyQt6, PyInstaller"
+    & $PythonExe -c "import PyQt6, PyInstaller, jmcomic, fitz, pyzipper"
     if ($LASTEXITCODE -ne 0) {
-        throw "构建环境缺少 PyQt6 或 PyInstaller（当前 Python：$PythonExe）。请运行：$PythonExe -m pip install -r requirements-dev.txt"
+        throw "构建环境缺少应用或打包依赖（当前 Python：$PythonExe）。请运行：$PythonExe -m pip install -r requirements-dev.txt"
     }
     # Prevent unrelated tools on PATH from contributing incompatible Qt DLLs.
     $pathParts = @($pythonDir, "$pythonDir\Scripts")

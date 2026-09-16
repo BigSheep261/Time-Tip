@@ -24,7 +24,7 @@ TimeTip 是一个仅供个人使用的 Windows 桌面时间管理工具，使用
 
 ## 安装与使用
 
-双击项目目录中的 `TimeTip-Setup.exe`，会自动安装到当前用户的 `%LOCALAPPDATA%\TimeTip`，创建桌面快捷方式并启动。无需预装 Python，无需管理员权限。适用于 Windows 10/11 64 位。
+双击 `TimeTip-Application` 目录中的 `TimeTip-Setup.exe`，会自动安装到当前用户的 `%LOCALAPPDATA%\TimeTip`，创建桌面快捷方式并启动。无需预装 Python，无需管理员权限。适用于 Windows 10/11 64 位。
 
 “倒计时”页中选择标准或循环类型。标准倒计时到达目标后提醒一次并停在零；循环倒计时按周期内的开始/结束时间运行。例如每天 09:30–17:30：09:30 前显示“待开始”和完整 8 小时，09:30 起倒数，17:30 提醒并等待次日 09:30。可选每天、周一至周五或每周指定日期；结束时间早于开始时间表示跨天，所选星期按开始日期计算。选中已有条目可编辑或删除。“设置”页显示进行中、待开始和已结束的数量，每条倒计时也会默认出现在“概览”中。删除后可在当前会话撤销最近一次删除。
 
@@ -32,7 +32,7 @@ TimeTip 是一个仅供个人使用的 Windows 桌面时间管理工具，使用
 
 在“设置”中勾选“开机自动启动 TimeTip”即可让程序在当前 Windows 用户登录后自动运行；取消勾选会移除启动项。
 
-JM漫画下载模块默认隐藏。在“设置”点击五次“里模式”按钮后，左侧会出现“JM漫画下载”。该模块使用 `jmcomic` 访问远端服务，首次使用前请安装 `requirements.txt` 中的依赖；下载和 PDF 打包均在后台线程执行，文件保存在本地数据目录的 `jm_downloads` 中。
+JM漫画下载模块默认隐藏。在“设置”点击五次“里模式”按钮后，左侧会出现“JM漫画下载”。该模块使用 `jmcomic` 访问远端服务，首次使用前请安装 `TimeTip-Application/requirements.txt` 中的依赖；下载和 PDF 打包均在后台线程执行，文件保存在本地数据目录的 `jm_downloads` 中。
 
 在“设置 → 每日工资”填写月薪、工作日、上下班时间和可选午休时间，保存后在概览查看。计算方式为：`每日工资 = 月薪 ÷ 当月勾选的工作日数`，`当前已赚 = 每日工资 × 已经过的有效工作秒数 ÷ 每日有效工作总秒数`。上班期间每秒刷新，下班、午休和休息日不增长，下班后保留当天已赚金额，下一天重新计算。程序重启或休眠恢复会按已经过的工作时段重新计算，不依赖程序保持前台运行。
 
@@ -64,24 +64,28 @@ JM漫画下载模块默认隐藏。在“设置”点击五次“里模式”按
 在 Windows PowerShell 中运行：
 
 ```powershell
-python -m pip install -r requirements-dev.txt
-.\build_installer.ps1
+python -m pip install -r TimeTip-Application/requirements-dev.txt
+.\TimeTip-Application\build_installer.ps1
 ```
 
-也可以直接双击项目目录中的 `build.bat` 或 `打包安装包.bat` 一键构建。脚本优先使用项目 `.venv` 内的 Python，其次使用 PATH 中的 Python；首次构建需先安装上述开发依赖。需要 Windows 10/11 64 位和 .NET Framework 4.x（安装器使用系统自带的 C# 编译器）。
+也可以直接双击 `TimeTip-Application` 目录中的 `build.bat` 一键构建。脚本优先使用项目 `.venv` 内的 Python，其次使用 PATH 中的 Python；首次构建需先安装上述开发依赖。需要 Windows 10/11 64 位和 .NET Framework 4.x（安装器使用系统自带的 C# 编译器）。
 
 脚本直接构建程序、编译安装器并生成 `TimeTip-Setup.exe`；测试和安装集成检查需按需单独运行。双击它即可安装到 `%LOCALAPPDATA%\TimeTip`，并创建桌面快捷方式。`dist\TimeTip` 是完整便携目录；不能仅复制其中的 EXE，需连同 `_internal` 一起复制。
 
 直接运行源码：
 
 ```powershell
-python -m pip install -r requirements.txt
-python timetip.py
+python -m pip install -r TimeTip-Application/requirements.txt
+python TimeTip-Application/timetip.py
 ```
 
-验证：`python -m unittest discover -s tests -v`。覆盖数据迁移、循环边界、跨天、补提醒、重启保存、并发启动、实例崩溃恢复，以及原有功能。六个页面在宽窄窗口下的截图保存在 `screenshots` 目录。构建后的安装与运行集成检查也可单独执行 `python tests/verify_package.py`。
+验证（在仓库根目录运行）：
 
-可运行 `python tests/preview_app.py` 打开独立样例工作台，其数据保存在 `build/ui-preview.ini`，用于手动检查 Windows 缩放和组件交互，不会修改正式用户配置。
+```powershell
+python -m unittest discover -s tests -v
+```
+
+当前测试覆盖 JM 模块解锁、连续搜索和详情重试、下载队列、后台任务退出、收藏夹导入导出，以及真实 `jmcomic` 下载器的进度与失败处理。下载测试使用本地生成图片和模拟远端客户端，不访问线上漫画服务；PDF 测试检查自然排序、页数、损坏图片和取消时的文件完整性。未安装 `jmcomic` 或 `PyMuPDF` 时会跳过相应集成用例，完整验证请先安装应用依赖。
 
 ## 开发结构
 

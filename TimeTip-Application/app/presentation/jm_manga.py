@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from PyQt6.QtCore import QThread, Qt, pyqtSignal
+from PyQt6.QtCore import QThread, QTimer, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -36,7 +36,11 @@ class JMWorker(QThread):
 
     def run(self) -> None:
         try:
-            self.completed.emit(self.function(*self.args))
+            if self.isInterruptionRequested():
+                return
+            result = self.function(*self.args)
+            if not self.isInterruptionRequested():
+                self.completed.emit(result)
         except Exception as exc:  # noqa: BLE001 - display a friendly error in the page
             self.failed.emit(str(exc) or exc.__class__.__name__)
 
@@ -154,28 +158,50 @@ class JMMangaPageMixin:
         self.jm_queue: list[dict[str, Any]] = []
         self.jm_queue_worker: JMWorker | None = None
         self.jm_lookup_worker: JMWorker | None = None
-        self.jm_favorite_items = self.store.read_json("jm_favorites", [])
-        if not isinstance(self.jm_favorite_items, list):
-            self.jm_favorite_items = []
-        self._jm_refresh_favorites()
+        self._jm_workers: set[JMWorker] = set()
+        self._jm_closing = False
+        self._jm_load_favorites()
         return page
 
     def _jm_start_worker(self, worker: JMWorker, done: Callable[[Any], None], failed: Callable[[str], None]) -> None:
-        worker.completed.connect(done)
-        worker.failed.connect(failed)
-        worker.finished.connect(worker.deleteLater)
+        # Keep ownership until QThread.finished, not merely until the result
+        # signal: run() can still be unwinding when the UI receives a result.
+        worker.setParent(self)
+        self._jm_workers.add(worker)
+        worker.completed.connect(lambda value: done(value) if not self._jm_closing else None)
+        worker.failed.connect(lambda message: failed(message) if not self._jm_closing else None)
+        worker.finished.connect(lambda: self._jm_worker_finished(worker))
         worker.start()
+
+    def _jm_worker_finished(self, worker: JMWorker) -> None:
+        was_queue = self.jm_queue_worker is worker
+        if was_queue:
+            self.jm_queue_worker = None
+        if self.jm_lookup_worker is worker:
+            self.jm_lookup_worker = None
+        self._jm_workers.discard(worker)
+        worker.deleteLater()
+        if self._jm_closing:
+            if not self._jm_workers:
+                QTimer.singleShot(0, self.quit_app)
+        elif was_queue:
+            self._jm_start_next()
 
     def _jm_search(self) -> None:
         keyword = self.jm_search_input.text().strip()
         if not keyword:
             self.jm_search_feedback.setText("请输入搜索关键词。")
             return
-        if self.jm_lookup_worker and self.jm_lookup_worker.isRunning():
+        if self._jm_closing or self.jm_lookup_worker is not None:
             return
         self.jm_search_feedback.setText("正在搜索…")
         self.jm_results.clear()
-        worker = JMWorker(self._jm_service().search, keyword, self.jm_search_page.value(), self.jm_search_mode.currentData())
+        try:
+            service = self._jm_service()
+        except (OSError, ValueError) as exc:
+            self._jm_lookup_failed(str(exc))
+            return
+        worker = JMWorker(service.search, keyword, self.jm_search_page.value(), self.jm_search_mode.currentData())
         self.jm_lookup_worker = worker
         self._jm_start_worker(worker, self._jm_search_done, self._jm_lookup_failed)
 
@@ -194,6 +220,7 @@ class JMMangaPageMixin:
             detail.clicked.connect(lambda _=False, album_id=data["id"]: self._jm_show_detail(album_id))
             line.addWidget(detail)
             favorite = QPushButton("取消收藏" if self._jm_is_favorite(data["id"]) else "收藏", objectName="secondaryButton")
+            favorite.setProperty("jmFavoriteId", str(data["id"]))
             favorite.clicked.connect(lambda _=False, value=data, button=favorite: self._jm_toggle_favorite(value, button))
             line.addWidget(favorite)
             download = QPushButton("加入整本", objectName="primaryButton")
@@ -208,10 +235,21 @@ class JMMangaPageMixin:
         self.jm_status.setText("JM 服务暂不可用。")
 
     def _jm_show_detail(self, album_id: str) -> None:
-        if self.jm_lookup_worker and self.jm_lookup_worker.isRunning():
+        if self._jm_closing or self.jm_lookup_worker is not None:
             return
         self.jm_status.setText("正在读取详情…")
-        worker = JMWorker(self._jm_service().detail, album_id)
+        self.jm_selected_id = ""
+        self.jm_selected_title = ""
+        self.jm_detail_title.setText("正在读取详情…")
+        self.jm_detail_text.clear()
+        self.jm_album_button.setEnabled(False)
+        self.jm_photo_button.setEnabled(False)
+        try:
+            service = self._jm_service()
+        except (OSError, ValueError) as exc:
+            self._jm_lookup_failed(str(exc))
+            return
+        worker = JMWorker(service.detail, album_id)
         self.jm_lookup_worker = worker
         self._jm_start_worker(worker, self._jm_detail_done, self._jm_lookup_failed)
 
@@ -239,22 +277,30 @@ class JMMangaPageMixin:
             self._jm_enqueue(self.jm_selected_id, self.jm_selected_title or self.jm_selected_id, self.jm_chapter.value(), self.jm_pdf_check.isChecked())
 
     def _jm_enqueue(self, album_id: str, title: str, chapter: int, pdf: bool) -> None:
+        if self._jm_closing:
+            return
         self.jm_queue.append({"id": f"{album_id}:{chapter}", "album_id": str(album_id), "title": title, "chapter": chapter, "pdf": pdf, "state": "排队中", "done": 0, "total": 0, "unit": "图片", "output": ""})
         self._jm_refresh_queue()
         self._jm_start_next()
 
     def _jm_start_next(self) -> None:
-        if self.jm_queue_worker and self.jm_queue_worker.isRunning():
+        if self._jm_closing or self.jm_queue_worker is not None:
             return
         task = next((item for item in self.jm_queue if item["state"] == "排队中"), None)
         if task is None:
             return
         task["state"] = "下载中"
         self._jm_refresh_queue()
-        service = self._jm_service()
+        try:
+            service = self._jm_service()
+        except (OSError, ValueError) as exc:
+            self._jm_task_failed(task, str(exc))
+            QTimer.singleShot(0, self._jm_start_next)
+            return
 
         def run() -> Any:
-            progress = self.jm_queue_worker.progress.emit if self.jm_queue_worker else None
+            service.cancelled = worker.isInterruptionRequested
+            progress = worker.progress.emit
             if task["chapter"]:
                 photo_id, _name, _total = service.chapter_id(task["album_id"], task["chapter"])
                 result = service.download_photo(photo_id, progress)
@@ -271,23 +317,21 @@ class JMMangaPageMixin:
         self._jm_start_worker(worker, lambda value: self._jm_task_done(task, value), lambda message: self._jm_task_failed(task, message))
 
     def _jm_progress(self, task: dict[str, Any], done: int, total: int, unit: str) -> None:
+        if self._jm_closing:
+            return
         task.update(done=done, total=total, unit=unit)
         self._jm_refresh_queue()
 
     def _jm_task_done(self, task: dict[str, Any], value: Any) -> None:
-        _result, output = value
-        task.update(state="已完成", done=task.get("total", 1), output=str(output))
+        result, output = value
+        task.update(state="已完成", done=result.image_count, total=result.image_count, output=str(output))
         self.jm_status.setText(f"已完成：{output}")
         self._jm_refresh_queue()
-        self.jm_queue_worker = None
-        self._jm_start_next()
 
     def _jm_task_failed(self, task: dict[str, Any], message: str) -> None:
         task.update(state="失败", output=message)
         self.jm_status.setText(message)
         self._jm_refresh_queue()
-        self.jm_queue_worker = None
-        self._jm_start_next()
 
     def _jm_refresh_queue(self) -> None:
         if not hasattr(self, "jm_queue_list"):
@@ -302,8 +346,9 @@ class JMMangaPageMixin:
             label = QLabel(f"{task['title']} · {chapter_label} · {task['state']}")
             line.addWidget(label)
             bar = QProgressBar()
-            bar.setRange(0, task.get("total", 0) or 0)
-            bar.setValue(min(task.get("done", 0), task.get("total", 0) or task.get("done", 0)))
+            total = task.get("total", 0)
+            bar.setRange(0, total or (0 if task["state"] == "下载中" else 1))
+            bar.setValue(min(task.get("done", 0), total or 1))
             line.addWidget(bar)
             if task.get("output"):
                 output = QLabel(task["output"], objectName="cardHint")
@@ -312,6 +357,24 @@ class JMMangaPageMixin:
             item.setSizeHint(row.sizeHint())
             self.jm_queue_list.addItem(item)
             self.jm_queue_list.setItemWidget(item, row)
+
+    def _jm_load_favorites(self) -> None:
+        saved = self.store.read_json("jm_favorites", [])
+        self.jm_favorite_items = []
+        seen: set[str] = set()
+        for data in saved if isinstance(saved, list) else []:
+            if not isinstance(data, dict):
+                continue
+            album_id = str(data.get("id") or "").strip()
+            if not album_id or album_id in seen:
+                continue
+            seen.add(album_id)
+            tags = data.get("tags", [])
+            self.jm_favorite_items.append({
+                "id": album_id, "title": str(data.get("title") or ""),
+                "tags": [str(tag) for tag in tags] if isinstance(tags, list) else [],
+            })
+        self._jm_refresh_favorites()
 
     def _jm_is_favorite(self, album_id: str) -> bool:
         return any(str(item.get("id")) == str(album_id) for item in self.jm_favorite_items if isinstance(item, dict))
@@ -332,6 +395,10 @@ class JMMangaPageMixin:
         if not hasattr(self, "jm_favorites"):
             return
         self.jm_favorites.clear()
+        for button in self.jm_results.findChildren(QPushButton):
+            album_id = button.property("jmFavoriteId")
+            if album_id is not None:
+                button.setText("取消收藏" if self._jm_is_favorite(album_id) else "收藏")
         for data in self.jm_favorite_items:
             if not isinstance(data, dict):
                 continue
@@ -353,6 +420,21 @@ class JMMangaPageMixin:
             self.jm_favorites.addItem(item)
             self.jm_favorites.setItemWidget(item, row)
 
-    def jm_shutdown(self) -> None:
-        if self.jm_queue_worker and self.jm_queue_worker.isRunning():
-            self.jm_queue_worker.requestInterruption()
+    def jm_shutdown(self) -> bool:
+        self._jm_closing = True
+        for task in self.jm_queue:
+            if task["state"] in {"排队中", "下载中"}:
+                task["state"] = "已取消"
+        for worker in self._jm_workers:
+            worker.requestInterruption()
+        if self._jm_workers:
+            self.jm_status.setText("正在停止后台任务，完成后退出…")
+            return False
+        return True
+
+    def jm_wait_for_shutdown(self) -> None:
+        # Fallback for OS/application shutdown that bypasses quit_app(). Normal
+        # exits wait asynchronously, keeping the UI responsive until finished.
+        self.jm_shutdown()
+        for worker in tuple(self._jm_workers):
+            worker.wait()

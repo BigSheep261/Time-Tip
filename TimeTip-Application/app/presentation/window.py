@@ -779,8 +779,8 @@ class TimeTipWindow(JMMangaPageMixin, EmojiPageMixin, MemoPageMixin, CountdownPa
     def quit_app(self) -> None:
         if not self.save_memo():
             return
-        if hasattr(self, "jm_shutdown"):
-            self.jm_shutdown()
+        if not self.jm_shutdown():
+            return
         self.quitting = True
         self.save_window_geometry()
         self.tray.hide()
@@ -794,8 +794,10 @@ class TimeTipWindow(JMMangaPageMixin, EmojiPageMixin, MemoPageMixin, CountdownPa
         if not self.quitting and self.tray.isVisible():
             self.hide()
             event.ignore()
-        else:
+        elif self.jm_shutdown():
             event.accept()
+        else:
+            event.ignore()
 
     def notify(self, text: str) -> None:
         QApplication.beep()
@@ -1230,6 +1232,7 @@ class TimeTipWindow(JMMangaPageMixin, EmojiPageMixin, MemoPageMixin, CountdownPa
             return
         try:
             self.store.import_data(path)
+            self._jm_load_favorites()
             self.countdowns = self.store.load_collection("countdowns"); self.memos = self.store.load_collection("memos"); self.anime = self.store.anime()
             saved_salary = self.store.read_json("salary", {}); self.salary_config = {**DEFAULT_SALARY, **saved_salary} if isinstance(saved_salary, dict) else DEFAULT_SALARY.copy()
             self._load_settings(); self.data_transfer_feedback.setText("数据已导入，界面已刷新。")

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import re
 import shutil
+import tempfile
+from threading import RLock
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -42,6 +44,20 @@ def _image_files(root: Path) -> list[Path]:
     return sorted(files, key=lambda path: _natural_key(path, root))
 
 
+def _display_count(value: Any) -> int:
+    text = str(value or "0").strip().replace(",", "").upper()
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)\s*([KMB万萬亿億]?)", text)
+    if not match:
+        return 0
+    scale = {"": 1, "K": 1000, "M": 1000000, "B": 1000000000,
+             "万": 10000, "萬": 10000, "亿": 100000000, "億": 100000000}
+    return int(float(match[1]) * scale[match[2]])
+
+
+class JMDownloadCancelled(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class JMDownloadResult:
     album_id: str
@@ -57,6 +73,7 @@ class JMComicService:
     def __init__(self, root: Path, settings: dict[str, Any] | None = None) -> None:
         self.root = root
         self.settings = settings or {}
+        self.cancelled: Callable[[], bool] = lambda: False
         self.download_root = root / "jm_downloads"
         self.download_root.mkdir(parents=True, exist_ok=True)
         self.cover_root = root / "jm_covers"
@@ -66,7 +83,12 @@ class JMComicService:
     def available() -> bool:
         return _load_jmcomic() is not None
 
+    def _check_cancelled(self) -> None:
+        if self.cancelled():
+            raise JMDownloadCancelled("任务已取消。")
+
     def _option(self):
+        self._check_cancelled()
         jmcomic = _load_jmcomic()
         if jmcomic is None:
             raise RuntimeError(dependency_error())
@@ -123,8 +145,8 @@ class JMComicService:
             "description": str(getattr(album, "description", "") or ""),
             "pub_date": str(getattr(album, "pub_date", "") or ""),
             "update_date": str(getattr(album, "update_date", "") or ""),
-            "views": int(getattr(album, "views", 0) or 0),
-            "likes": int(getattr(album, "likes", 0) or 0),
+            "views": _display_count(getattr(album, "views", 0)),
+            "likes": _display_count(getattr(album, "likes", 0)),
         }
 
     def chapter_id(self, album_id: str, chapter: int) -> tuple[str, str, int]:
@@ -143,10 +165,11 @@ class JMComicService:
         if jmcomic is None:
             raise RuntimeError(dependency_error())
         option = self._option()
-        downloader_cls = self._progress_downloader(jmcomic)
+        downloader_cls = self._progress_downloader(jmcomic, self._check_cancelled)
         downloader = downloader_cls(option, progress)
         with downloader:
             album = downloader.download_album(jmcomic.JmcomicText.parse_to_jm_id(album_id))
+        self._verify_download(downloader)
         directory = Path(option.dir_rule.decide_album_root_dir(album))
         return JMDownloadResult(str(album.id), str(album.title), len(album), downloader.downloaded_images, directory)
 
@@ -155,34 +178,80 @@ class JMComicService:
         if jmcomic is None:
             raise RuntimeError(dependency_error())
         option = self._option()
-        downloader_cls = self._progress_downloader(jmcomic)
+        downloader_cls = self._progress_downloader(jmcomic, self._check_cancelled)
         downloader = downloader_cls(option, progress)
         with downloader:
             photo = downloader.download_photo(jmcomic.JmcomicText.parse_to_jm_id(photo_id))
+        self._verify_download(downloader)
         directory = Path(option.decide_image_save_dir(photo))
         return JMDownloadResult(str(getattr(photo, "album_id", photo_id)), str(getattr(photo, "title", "") or ""), 1, downloader.downloaded_images, directory)
 
+    def _verify_download(self, downloader) -> None:
+        self._check_cancelled()
+        failed_images = len(downloader.download_failed_image)
+        failed_photos = len(downloader.download_failed_photo)
+        if failed_images or failed_photos:
+            raise RuntimeError(f"下载不完整：{failed_photos} 个章节、{failed_images} 张图片失败，请重试。")
+        if downloader.downloaded_images == 0:
+            raise RuntimeError("没有下载到图片，请重试。")
+        downloader.finish_progress()
+
     @staticmethod
-    def _progress_downloader(jmcomic):
+    def _progress_downloader(jmcomic, check_cancelled: Callable[[], None] = lambda: None):
         class ProgressDownloader(jmcomic.JmDownloader):
             def __init__(self, option, callback=None):
                 super().__init__(option)
                 self.callback = callback
                 self.downloaded_images = 0
                 self.total_images = 0
+                self.photo_sizes: dict[str, int] = {}
+                self.completed_paths: set[str] = set()
+                self.progress_lock = RLock()
+
+            def before_album(self, album):
+                check_cancelled()
+                super().before_album(album)
+                with self.progress_lock:
+                    self.total_images = _display_count(getattr(album, "page_count", 0))
+                    self._emit()
 
             def before_photo(self, photo):
+                check_cancelled()
                 super().before_photo(photo)
-                try:
-                    self.total_images = len(photo)
-                except Exception:
-                    self.total_images = 0
-                self._emit()
+                with self.progress_lock:
+                    self.photo_sizes[str(photo.id)] = len(photo)
+                    self.total_images = max(self.total_images, sum(self.photo_sizes.values()))
+                    self._emit()
+
+            def before_image(self, image, img_save_path):
+                check_cancelled()
+                super().before_image(image, img_save_path)
+
+            def download_by_image_detail(self, image):
+                super().download_by_image_detail(image)
+                # jmcomic 2.7.0 skips after_image for cached files; later
+                # versions call it. Count each saved path once in either case.
+                if image.cache and image.exists and not image.skip:
+                    self._record_image(image.save_path)
 
             def after_image(self, image, img_save_path):
                 super().after_image(image, img_save_path)
-                self.downloaded_images += 1
-                self._emit()
+                self._record_image(img_save_path)
+
+            def _record_image(self, img_save_path):
+                with self.progress_lock:
+                    key = str(img_save_path)
+                    if key in self.completed_paths:
+                        return
+                    self.completed_paths.add(key)
+                    self.downloaded_images += 1
+                    self.total_images = max(self.total_images, self.downloaded_images)
+                    self._emit()
+
+            def finish_progress(self):
+                with self.progress_lock:
+                    self.total_images = self.downloaded_images
+                    self._emit()
 
             def _emit(self):
                 if self.callback and self.total_images > 0:
@@ -199,23 +268,27 @@ class JMComicService:
         if not images:
             raise RuntimeError("下载目录中没有可打包的图片。")
         output = source_dir.parent / f"{output_name}.pdf"
-        document = fitz.open()
+        temporary: Path | None = None
         try:
-            for image in images:
-                try:
-                    image_doc = fitz.open(image)
-                    pdf_bytes = image_doc.convert_to_pdf()
-                    image_doc.close()
-                    page_doc = fitz.open("pdf", pdf_bytes)
-                    document.insert_pdf(page_doc)
-                    page_doc.close()
-                except Exception:
-                    continue
-            if document.page_count == 0:
-                raise RuntimeError("无法从图片创建 PDF。")
-            document.save(output)
+            with fitz.open() as document:
+                for image in images:
+                    self._check_cancelled()
+                    try:
+                        with fitz.open(image) as image_doc:
+                            pdf_bytes = image_doc.convert_to_pdf()
+                        with fitz.open("pdf", pdf_bytes) as page_doc:
+                            document.insert_pdf(page_doc)
+                    except Exception as exc:
+                        raise RuntimeError(f"无法读取图片 {image.name}，PDF 未生成。") from exc
+                self._check_cancelled()
+                with tempfile.NamedTemporaryFile(dir=output.parent, suffix=".pdf", delete=False) as handle:
+                    temporary = Path(handle.name)
+                document.save(temporary)
+            self._check_cancelled()
+            temporary.replace(output)
         finally:
-            document.close()
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
         return output
 
     @staticmethod
