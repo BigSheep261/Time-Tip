@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import PyQt6
+from PyInstaller.utils.hooks import collect_submodules
 
 project = Path(SPECPATH)
 qt_bin = Path(PyQt6.__file__).parent / 'Qt6' / 'bin'
@@ -13,7 +14,9 @@ a = Analysis(
         (str(project / 'assets' / 'timetip.png'), 'assets'),
         (str(project / 'assets' / 'anime-default-cover.png'), 'assets'),
     ],
-    hiddenimports=[],
+    # jmcomic loads client implementations dynamically; collect them so the
+    # frozen Windows build behaves like the source build.
+    hiddenimports=collect_submodules('jmcomic') + ['fitz', 'pyzipper'],
     hookspath=[],
     runtime_hooks=[],
     excludes=[],

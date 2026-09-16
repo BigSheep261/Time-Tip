@@ -8,7 +8,7 @@ from app.domain.anime import normalize_tags, validate_anime
 
 class DataStore:
     KEYS = ("work", "break", "salary", "widgets", "window_geometry", "date_format", "theme", "target", "target_notified", "memo", "update_auto_check")
-    COLLECTIONS = ("countdowns", "memos", "reminders", "anime", "anime_groups", "emojis", "emoji_categories")
+    COLLECTIONS = ("countdowns", "memos", "reminders", "anime", "anime_groups", "emojis", "emoji_categories", "jm_favorites")
     def __init__(self, root: str | None = None):
         configured = os.environ.get("TIMETIP_DATA_DIR")
         if root: self.root = Path(root)

@@ -56,6 +56,7 @@ from app.presentation.anime_organization import AnimeDragHandle, AnimeGroupsDial
 from app.presentation.countdowns import CountdownPageMixin
 from app.presentation.memos import MemoPageMixin
 from app.presentation.emojis import EmojiPageMixin
+from app.presentation.jm_manga import JMMangaPageMixin
 from app.presentation.widgets import Card, DashboardTile, ResizeHandle, WidgetGrid
 from app.infrastructure.store import Store
 from app.infrastructure import startup
@@ -601,7 +602,7 @@ class AnimeFolderDialog(QDialog):
         self.accept()
 
 
-class TimeTipWindow(EmojiPageMixin, MemoPageMixin, CountdownPageMixin, QMainWindow):
+class TimeTipWindow(JMMangaPageMixin, EmojiPageMixin, MemoPageMixin, CountdownPageMixin, QMainWindow):
     def __init__(self, store: Store | None = None) -> None:
         super().__init__()
         self.store = store or Store()
@@ -638,6 +639,11 @@ class TimeTipWindow(EmojiPageMixin, MemoPageMixin, CountdownPageMixin, QMainWind
         except (ValueError, TypeError, KeyError):
             self.salary_config = DEFAULT_SALARY.copy()
         self.quitting = False
+        self._jm_unlock_clicks = 0
+        self._jm_unlock_timer = QTimer(self)
+        self._jm_unlock_timer.setSingleShot(True)
+        self._jm_unlock_timer.setInterval(1600)
+        self._jm_unlock_timer.timeout.connect(self._reset_jm_unlock_clicks)
         self.updater = Updater(self)
         self.updater.update_available.connect(self._on_update_available)
         self.updater.no_update.connect(self._on_no_update)
@@ -682,6 +688,25 @@ class TimeTipWindow(EmojiPageMixin, MemoPageMixin, CountdownPageMixin, QMainWind
         ids = [theme.id for theme in available_themes()]
         current = ids.index(self.theme.id) if self.theme.id in ids else 0
         self.set_theme(ids[(current + 1) % len(ids)])
+
+    def _reset_jm_unlock_clicks(self) -> None:
+        self._jm_unlock_clicks = 0
+
+    def _unlock_jm_mode(self) -> None:
+        if self.jm_nav_button.isVisible():
+            self.jm_unlock_feedback.setText("JM漫画下载模块已显示在左侧导航栏。")
+            return
+        self._jm_unlock_clicks += 1
+        self._jm_unlock_timer.start()
+        remaining = max(0, 5 - self._jm_unlock_clicks)
+        if remaining:
+            self.jm_unlock_feedback.setText(f"再点击 {remaining} 次显示 JM漫画下载模块。")
+            return
+        self._reset_jm_unlock_clicks()
+        self.jm_nav_button.setVisible(True)
+        self.jm_unlock_feedback.setText("JM漫画下载模块已显示在左侧导航栏。")
+        self.jm_unlock_button.setText("已解锁")
+        self._switch_page(8)
 
     def save_theme(self) -> None:
         if hasattr(self, "theme_combo") and self.theme_combo.currentData():
@@ -754,6 +779,8 @@ class TimeTipWindow(EmojiPageMixin, MemoPageMixin, CountdownPageMixin, QMainWind
     def quit_app(self) -> None:
         if not self.save_memo():
             return
+        if hasattr(self, "jm_shutdown"):
+            self.jm_shutdown()
         self.quitting = True
         self.save_window_geometry()
         self.tray.hide()
@@ -806,7 +833,7 @@ class TimeTipWindow(EmojiPageMixin, MemoPageMixin, CountdownPageMixin, QMainWind
         side_layout.addWidget(side_label)
         self.nav_buttons: list[QPushButton] = []
         nav_by_index = {}
-        for text, page_index in [("概览", 0), ("日历提醒", 1), ("番茄钟", 2), ("备忘录", 3), ("倒计时", 4), ("设置", 5), ("表情包", 7), ("看番提醒", 6)]:
+        for text, page_index in [("概览", 0), ("日历提醒", 1), ("番茄钟", 2), ("备忘录", 3), ("倒计时", 4), ("设置", 5), ("表情包", 7), ("看番提醒", 6), ("JM漫画下载", 8)]:
             button = QPushButton(text)
             button.setObjectName("navButton")
             button.setCheckable(True)
@@ -816,7 +843,13 @@ class TimeTipWindow(EmojiPageMixin, MemoPageMixin, CountdownPageMixin, QMainWind
         # Keep page-index order for state updates while placing 设置 at the end.
         for page_index in (0, 1, 2, 3, 4, 7, 6, 5):
             side_layout.addWidget(nav_by_index[page_index])
+        self.jm_nav_button = nav_by_index[8]
+        self.jm_nav_button.setVisible(False)
+        side_layout.addWidget(self.jm_nav_button)
+        # Keep the public legacy list stable for existing integrations; JM is
+        # an opt-in navigation item tracked separately until it is unlocked.
         self.nav_buttons = [nav_by_index[index] for index in range(8)]
+        self._all_nav_buttons = self.nav_buttons + [self.jm_nav_button]
         side_layout.addStretch()
         hint = QLabel(f"私人效率工具 {DISPLAY_VERSION}\n数据仅保存在本机")
         hint.setObjectName("sideHint")
@@ -832,6 +865,7 @@ class TimeTipWindow(EmojiPageMixin, MemoPageMixin, CountdownPageMixin, QMainWind
         self.pages.addWidget(self._settings_page())
         self.pages.addWidget(self._anime_page())
         self.pages.addWidget(self._emoji_page())
+        self.pages.addWidget(self._scroll_page(self._jm_page()))
         body_layout.addWidget(self.pages, 1)
         root_layout.addWidget(body, 1)
         self.setCentralWidget(root)
@@ -1495,6 +1529,21 @@ class TimeTipWindow(EmojiPageMixin, MemoPageMixin, CountdownPageMixin, QMainWind
         theme_layout.addWidget(self.theme_description)
         layout.addWidget(theme_card)
         self.refresh_theme_options()
+        jm_card = Card()
+        jm_layout = QVBoxLayout(jm_card)
+        jm_layout.setContentsMargins(20, 14, 20, 14)
+        jm_row = QHBoxLayout()
+        jm_row.addWidget(QLabel("里模式", objectName="cardTitle"))
+        self.jm_unlock_button = QPushButton("里模式", objectName="primaryButton")
+        self.jm_unlock_button.setToolTip("连续点击五次显示 JM漫画下载模块")
+        self.jm_unlock_button.clicked.connect(self._unlock_jm_mode)
+        jm_row.addWidget(self.jm_unlock_button)
+        jm_row.addStretch()
+        jm_layout.addLayout(jm_row)
+        self.jm_unlock_feedback = QLabel("连续点击五次后显示 JM漫画下载模块。", objectName="cardHint")
+        self.jm_unlock_feedback.setWordWrap(True)
+        jm_layout.addWidget(self.jm_unlock_feedback)
+        layout.addWidget(jm_card)
         startup_card = Card()
         startup_layout = QVBoxLayout(startup_card)
         startup_layout.setContentsMargins(20, 14, 20, 14)
@@ -1776,7 +1825,7 @@ class TimeTipWindow(EmojiPageMixin, MemoPageMixin, CountdownPageMixin, QMainWind
             animation.setEndValue(QPoint(0, 0))
             self._page_animation = animation
             animation.start()
-        for i, button in enumerate(self.nav_buttons):
+        for i, button in enumerate(getattr(self, "_all_nav_buttons", self.nav_buttons)):
             button.setChecked(i == index)
         if index == 1:
             self._calendar_selected(self.calendar.selectedDate())
