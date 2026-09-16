@@ -8,7 +8,6 @@ from .db import init_db, list_packages, latest_package, add_package, log_downloa
 import re
 
 VERSION_RE = re.compile(r'^V\d+\.\d+\.\d+$')
-from .github_sync import sync_github
 from .web_process import start_web
 
 app = Flask(__name__)
@@ -34,14 +33,6 @@ def packages():
 @require_auth
 def admin_stats():
     return jsonify(stats())
-
-@app.post('/api/admin/sync')
-@require_auth
-def sync():
-    try:
-        return jsonify(sync_github())
-    except Exception as exc:
-        return jsonify({"ok": False, "message": str(exc)}), 502
 
 @app.post('/api/admin/upload')
 @require_auth
