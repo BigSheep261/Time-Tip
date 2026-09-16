@@ -1,12 +1,12 @@
 """Emoji/sticker library page and local category management."""
 from __future__ import annotations
 
-import shutil
 import uuid
 import zipfile
+from collections import defaultdict
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QBuffer, QIODevice, Qt
 from PyQt6.QtGui import QImageReader
 from PyQt6.QtWidgets import (
     QFileDialog, QHBoxLayout, QInputDialog, QLabel, QListWidget,
@@ -16,6 +16,8 @@ from PyQt6.QtWidgets import (
 from app.presentation.emoji_grid import EmojiGrid
 from app.presentation.widgets import Card
 from app.infrastructure.emoji_transfer import export_emoji_package, read_emoji_package
+from app.infrastructure.emoji_images import emoji_fingerprint
+from app.presentation.emoji_dialog import EmojiCategorySelectionDialog
 
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
@@ -24,6 +26,8 @@ DEFAULT_EMOJI_CATEGORY = {"id": "default", "name": "默认"}
 
 class EmojiPageMixin:
     def _load_emoji_data(self):
+        self._emoji_fingerprint_cache = {}
+        self._emoji_duplicate_ids = set()
         self.emoji_root = self.store.asset_root("emojis")
         raw_categories = self.store.read_json("emoji_categories", [])
         self.emoji_categories = []
@@ -55,6 +59,7 @@ class EmojiPageMixin:
                 if not absolute.is_file() or not absolute.is_relative_to(self.emoji_root.resolve()):
                     continue
                 self.emojis.append({"id": record_id, "path": relative, "category_id": category_id})
+        self._refresh_duplicate_ids()
         if self.store.read_json("emoji_categories", None) != self.emoji_categories:
             self.store.write_json("emoji_categories", self.emoji_categories)
         if self.store.read_json("emojis", None) != self.emojis:
@@ -74,6 +79,9 @@ class EmojiPageMixin:
         subtitle.setWordWrap(True)
         title.addWidget(subtitle)
         header.addLayout(title, 1)
+        self.emoji_feedback = QLabel(objectName="cardHint")
+        self.emoji_feedback.setWordWrap(True)
+        self.emoji_feedback.hide()
         add_images = QPushButton("添加图片", objectName="secondaryButton")
         add_images.setMinimumHeight(44)
         add_images.clicked.connect(self._choose_emoji_files)
@@ -96,6 +104,7 @@ class EmojiPageMixin:
         new_category.clicked.connect(self._new_emoji_category)
         header.addWidget(new_category)
         layout.addLayout(header)
+        layout.addWidget(self.emoji_feedback)
 
         content = QHBoxLayout()
         content.setSpacing(14)
@@ -143,8 +152,13 @@ class EmojiPageMixin:
     def _refresh_emoji_categories(self, selected_id=None):
         self.emoji_category_list.blockSignals(True)
         self.emoji_category_list.clear()
+        duplicate_counts = defaultdict(int)
+        for record in self.emojis:
+            if record["id"] in self._emoji_duplicate_ids:
+                duplicate_counts[record["category_id"]] += 1
         for category in self.emoji_categories:
-            item = QListWidgetItem(category["name"])
+            suffix = f"（{duplicate_counts[category['id']]} 张重复）" if duplicate_counts[category["id"]] else ""
+            item = QListWidgetItem(category["name"] + suffix)
             item.setData(Qt.ItemDataRole.UserRole, category["id"])
             self.emoji_category_list.addItem(item)
         chosen = selected_id or "default"
@@ -172,7 +186,70 @@ class EmojiPageMixin:
             if path.is_file():
                 display_record = {**record, "absolute_path": str(path)}
                 self.emoji_grid.add_image(str(path), display_record)
+        self.emoji_grid.highlight_duplicates(self._emoji_duplicate_ids)
         self._update_emoji_actions()
+
+    def _fingerprint_for_path(self, path: Path):
+        try:
+            stat = path.stat()
+            key = path.resolve().as_posix()
+            cached = self._emoji_fingerprint_cache.get(key)
+            stamp = (stat.st_mtime_ns, stat.st_size)
+            if cached and cached[0] == stamp:
+                return cached[1]
+            value = emoji_fingerprint(path.read_bytes())
+            self._emoji_fingerprint_cache[key] = (stamp, value)
+            return value
+        except OSError:
+            return None
+
+    def _refresh_duplicate_ids(self):
+        seen = {}
+        duplicates = set()
+        for record in self.emojis:
+            fingerprint = self._fingerprint_for_path(self.emoji_root / record["path"])
+            if not fingerprint:
+                continue
+            previous = seen.setdefault(record["category_id"], {})
+            if fingerprint in previous:
+                duplicates.add(previous[fingerprint])
+                duplicates.add(record["id"])
+            else:
+                previous[fingerprint] = record["id"]
+        self._emoji_duplicate_ids = duplicates
+
+    def _show_emoji_feedback(self, text):
+        self.emoji_feedback.setText(text)
+        self.emoji_feedback.show()
+
+    def _category_fingerprint_index(self, category_id):
+        result = {}
+        for record in self.emojis:
+            if record["category_id"] != category_id:
+                continue
+            fingerprint = self._fingerprint_for_path(self.emoji_root / record["path"])
+            if fingerprint:
+                result.setdefault(fingerprint, record["id"])
+        return result
+
+    def _add_emoji_bytes(self, data, suffix, category_id, fingerprints):
+        fingerprint = emoji_fingerprint(data)
+        if not fingerprint:
+            return None, None
+        duplicate_id = fingerprints.get(fingerprint)
+        if duplicate_id:
+            return None, duplicate_id
+        record_id = uuid.uuid4().hex
+        destination = self.emoji_root / category_id / (record_id + suffix)
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(data)
+        except OSError:
+            return None, None
+        self.emojis.append({"id": record_id, "path": destination.relative_to(self.emoji_root).as_posix(),
+                            "category_id": category_id})
+        fingerprints[fingerprint] = record_id
+        return record_id, None
 
     def _update_emoji_actions(self):
         self.delete_emoji_button.setEnabled(bool(self.emoji_grid.selectedItems()))
@@ -196,17 +273,21 @@ class EmojiPageMixin:
         self.store.write_json("emojis", self.emojis)
 
     def _export_emoji_package(self):
+        dialog = EmojiCategorySelectionDialog(self.emoji_categories, self.emojis, "导出", self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        selected_ids = dialog.selected_category_ids()
         path, _ = QFileDialog.getSaveFileName(
             self, "导出表情包", "TimeTip-表情包.zip", "表情包包 (*.zip)"
         )
         if not path:
             return
         try:
-            export_emoji_package(path, self.emoji_categories, self.emojis, self.emoji_root)
+            export_emoji_package(path, self.emoji_categories, self.emojis, self.emoji_root, selected_ids)
         except (OSError, ValueError) as error:
             QMessageBox.warning(self, "导出表情包失败", str(error))
             return
-        QMessageBox.information(self, "导出表情包", "表情包已导出。")
+        self._show_emoji_feedback("表情包已导出。")
 
     def _import_emoji_package(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -219,6 +300,12 @@ class EmojiPageMixin:
         except (OSError, ValueError, zipfile.BadZipFile) as error:
             QMessageBox.warning(self, "导入表情包失败", str(error))
             return
+        dialog = EmojiCategorySelectionDialog(categories, records, "导入", self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        selected_ids = dialog.selected_category_ids()
+        categories = [category for category in categories if category["id"] in selected_ids]
+        records = [record for record in records if record["category_id"] in selected_ids]
 
         existing_names = {category["name"] for category in self.emoji_categories}
         category_map = {"default": "default"}
@@ -226,6 +313,10 @@ class EmojiPageMixin:
         for category in categories:
             source_id = category["id"]
             if source_id == "default":
+                continue
+            existing = next((item for item in self.emoji_categories if item["name"] == category["name"]), None)
+            if existing:
+                category_map[source_id] = existing["id"]
                 continue
             name = category["name"]
             base = name
@@ -241,26 +332,29 @@ class EmojiPageMixin:
             imported_categories += 1
 
         imported_images = 0
+        duplicate_ids = set()
+        fingerprints_by_category = {category["id"]: self._category_fingerprint_index(category["id"])
+                                    for category in self.emoji_categories}
         for record in records:
             category_id = category_map.get(record["category_id"], "default")
             source_bytes = assets.get(record["path"])
             if source_bytes is None:
                 continue
             suffix = Path(record["path"]).suffix.lower()
-            new_id = uuid.uuid4().hex
-            destination = self.emoji_root / category_id / (new_id + suffix)
-            try:
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.write_bytes(source_bytes)
-            except OSError:
-                continue
-            self.emojis.append({"id": new_id, "path": destination.relative_to(self.emoji_root).as_posix(),
-                                "category_id": category_id})
-            imported_images += 1
+            new_id, duplicate_id = self._add_emoji_bytes(source_bytes, suffix, category_id,
+                                                         fingerprints_by_category.setdefault(category_id, {}))
+            if new_id:
+                imported_images += 1
+            elif duplicate_id:
+                duplicate_ids.add(duplicate_id)
         self.store.write_json("emoji_categories", self.emoji_categories)
         self.store.write_json("emojis", self.emojis)
+        self._emoji_duplicate_ids = duplicate_ids
         self._refresh_emoji_categories(self.active_emoji_category)
-        QMessageBox.information(self, "导入表情包", f"已导入 {imported_categories} 个分类、{imported_images} 张图片。")
+        if duplicate_ids:
+            self._show_emoji_feedback(f"已导入 {imported_categories} 个分类、{imported_images} 张图片；重复图片已跳过并高亮显示。")
+        else:
+            self._show_emoji_feedback(f"已导入 {imported_categories} 个分类、{imported_images} 张图片。")
 
     def _choose_emoji_files(self):
         paths, _ = QFileDialog.getOpenFileNames(self, "添加表情包图片", "", "图片文件 (*.png *.jpg *.jpeg *.gif *.webp *.bmp)")
@@ -269,40 +363,46 @@ class EmojiPageMixin:
 
     def _import_emoji_files(self, paths):
         category_id = self.active_emoji_category
-        category_root = self.emoji_root / category_id
-        category_root.mkdir(parents=True, exist_ok=True)
         added = 0
+        duplicate_ids = set()
+        fingerprints = self._category_fingerprint_index(category_id)
         for source_name in paths:
             source = Path(source_name)
             if not source.is_file() or source.suffix.lower() not in IMAGE_EXTENSIONS:
                 continue
             if QImageReader(str(source)).read().isNull():
                 continue
-            record_id = uuid.uuid4().hex
-            destination = category_root / (record_id + source.suffix.lower())
             try:
-                shutil.copy2(source, destination)
+                data = source.read_bytes()
             except OSError:
                 continue
-            self.emojis.append({"id": record_id, "path": destination.relative_to(self.emoji_root).as_posix(), "category_id": category_id})
-            added += 1
+            record_id, duplicate_id = self._add_emoji_bytes(data, source.suffix.lower(), category_id, fingerprints)
+            if record_id:
+                added += 1
+            elif duplicate_id:
+                duplicate_ids.add(duplicate_id)
         if added:
             self.store.write_json("emojis", self.emojis)
-            self._refresh_emoji_grid()
+        self._emoji_duplicate_ids = duplicate_ids
+        self._refresh_emoji_grid()
+        if duplicate_ids:
+            self._show_emoji_feedback(f"{len(duplicate_ids)} 张重复图片已跳过，并高亮显示已有图片。")
 
     def _import_emoji_image(self, image):
         if image is None or image.isNull():
             return
-        category_root = self.emoji_root / self.active_emoji_category
-        category_root.mkdir(parents=True, exist_ok=True)
-        record_id = uuid.uuid4().hex
-        destination = category_root / (record_id + ".png")
-        if not image.save(str(destination), "PNG"):
+        buffer = QBuffer()
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        if not image.save(buffer, "PNG"):
             return
-        self.emojis.append({"id": record_id, "path": destination.relative_to(self.emoji_root).as_posix(),
-                            "category_id": self.active_emoji_category})
-        self.store.write_json("emojis", self.emojis)
+        record_id, duplicate_id = self._add_emoji_bytes(bytes(buffer.data()), ".png", self.active_emoji_category,
+                                                        self._category_fingerprint_index(self.active_emoji_category))
+        if record_id:
+            self.store.write_json("emojis", self.emojis)
+        self._emoji_duplicate_ids = {duplicate_id} if duplicate_id else set()
         self._refresh_emoji_grid()
+        if duplicate_id:
+            self._show_emoji_feedback("重复图片已跳过，并高亮显示已有图片。")
 
     def _new_emoji_category(self):
         name, accepted = QInputDialog.getText(self, "新建分类文件夹", "分类名称")

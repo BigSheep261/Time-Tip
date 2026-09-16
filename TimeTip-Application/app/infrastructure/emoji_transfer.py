@@ -6,18 +6,30 @@ import zipfile
 from pathlib import Path
 
 
-def export_emoji_package(path: str, categories: list[dict], emojis: list[dict], root: Path) -> None:
-    payload = {"format": "timetip-emojis", "version": 1, "categories": categories, "emojis": emojis}
+def export_emoji_package(path: str, categories: list[dict], emojis: list[dict], root: Path,
+                         category_ids: set[str] | None = None) -> None:
+    selected = [category for category in categories if category_ids is None or category["id"] in category_ids]
+    if not selected:
+        raise ValueError("请至少选择一个表情包分类。")
+    selected_ids = {category["id"] for category in selected}
+    root = root.resolve()
+    records = []
+    sources = {}
+    for record in emojis:
+        if record["category_id"] not in selected_ids:
+            continue
+        relative = Path(str(record.get("path", "")))
+        source = (root / relative).resolve()
+        if relative.is_absolute() or ".." in relative.parts or not source.is_file() or not source.is_relative_to(root):
+            continue
+        records.append(record)
+        sources[relative.as_posix()] = source
+    payload = {"format": "timetip-emojis", "version": 1, "categories": selected, "emojis": records}
     destination = Path(path)
     with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("manifest.json", json.dumps(payload, ensure_ascii=False, indent=2))
-        root = root.resolve()
-        for record in emojis:
-            relative = Path(str(record.get("path", "")))
-            source = (root / relative).resolve()
-            if relative.is_absolute() or ".." in relative.parts or not source.is_file() or not source.is_relative_to(root):
-                continue
-            archive.write(source, "emojis/" + relative.as_posix())
+        for relative, source in sources.items():
+            archive.write(source, "emojis/" + relative)
 
 
 def read_emoji_package(path: str) -> tuple[list[dict], list[dict], dict[str, bytes]]:

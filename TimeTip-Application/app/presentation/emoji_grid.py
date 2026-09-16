@@ -4,8 +4,23 @@ from __future__ import annotations
 from pathlib import Path
 
 from PyQt6.QtCore import QBuffer, QIODevice, QMimeData, QSize, Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QDrag, QIcon, QMovie, QPixmap
-from PyQt6.QtWidgets import QListWidget, QListWidgetItem
+from PyQt6.QtGui import QColor, QDrag, QIcon, QMovie, QPainter, QPen, QPixmap
+from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QStyledItemDelegate
+
+
+DUPLICATE_ROLE = Qt.ItemDataRole.UserRole + 1
+
+
+class EmojiItemDelegate(QStyledItemDelegate):
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+        if index.data(DUPLICATE_ROLE):
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(QPen(QColor("#e59d36"), 3))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(option.rect.adjusted(3, 3, -3, -3), 10, 10)
+            painter.restore()
 
 
 class EmojiGrid(QListWidget):
@@ -17,6 +32,7 @@ class EmojiGrid(QListWidget):
         super().__init__(parent)
         self._movies: dict[int, QMovie] = {}
         self._reordering = False
+        self.setItemDelegate(EmojiItemDelegate(self))
         self.setViewMode(QListWidget.ViewMode.IconMode)
         self.setFlow(QListWidget.Flow.LeftToRight)
         self.setWrapping(True)
@@ -35,6 +51,19 @@ class EmojiGrid(QListWidget):
         self.setDefaultDropAction(Qt.DropAction.CopyAction)
         self.setMinimumHeight(260)
         self.setAccessibleName("表情包图片网格，可拖入图片或拖出到聊天窗口")
+
+    def highlight_duplicates(self, record_ids: set[str]) -> None:
+        first = None
+        for row in range(self.count()):
+            item = self.item(row)
+            duplicate = item.data(Qt.ItemDataRole.UserRole)["id"] in record_ids
+            item.setData(DUPLICATE_ROLE, duplicate)
+            item.setData(Qt.ItemDataRole.AccessibleDescriptionRole, "重复图片，已跳过添加" if duplicate else "")
+            if duplicate and first is None:
+                first = item
+        if first is not None:
+            self.scrollToItem(first)
+        self.viewport().update()
 
     def add_image(self, path: str, record: dict) -> None:
         pixmap = QPixmap(path)
@@ -119,13 +148,13 @@ class EmojiGrid(QListWidget):
         super().hideEvent(event)
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls() or (self._reordering and event.source() is self):
+        if event.mimeData().hasUrls() or event.mimeData().hasImage() or (self._reordering and event.source() is self):
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dragMoveEvent(self, event):
-        if event.mimeData().hasUrls() or (self._reordering and event.source() is self):
+        if event.mimeData().hasUrls() or event.mimeData().hasImage() or (self._reordering and event.source() is self):
             event.acceptProposedAction()
         else:
             event.ignore()
