@@ -29,6 +29,7 @@ LIGHT_COLORS = {
     "calendar_alternate": "#FAFAFC", "scroll_handle": "#D8DAE5", "focus_ring": "#9385F0",
     "disabled_text": "#8A8D9C", "disabled": "#EAECF3", "input_disabled": "#F5F6FA",
     "danger": "#BA3345", "danger_bg": "#FFF0F2", "danger_hover": "#F9D9DE",
+    "danger_button_hover": "#A52D3E", "danger_button_pressed": "#8F2635",
     "danger_border": "#F4CBD2", "success": "#237255", "warning": "#B26020",
     "green_bg": "#EAF5EE", "green_border": "#D1E7D8", "green_value": "#236346",
     "green_text": "#3F6A51", "widget_text": "#686D80", "widget_menu_text": "#606579",
@@ -49,6 +50,7 @@ DARK_COLORS = {
     "scroll_handle": "#535C74", "focus_ring": "#B4A7FF", "disabled_text": "#828A9E",
     "disabled": "#292E3C", "input_disabled": "#252A37", "danger": "#FF9CAC",
     "danger_bg": "#422935", "danger_hover": "#583343", "danger_border": "#684051",
+    "danger_button_hover": "#FFB0BD", "danger_button_pressed": "#E77F91",
     "success": "#82D7AC", "warning": "#F4B77D", "green_bg": "#21392F",
     "green_border": "#355547", "green_value": "#9CE0B8", "green_text": "#ADCFBC",
     "widget_text": "#ABB2C6", "widget_menu_text": "#BBC2D7",
@@ -132,6 +134,9 @@ QDateTimeEdit:focus, QTimeEdit:focus, QLineEdit:focus, QSpinBox:focus, QDoubleSp
 #primaryButton {{ background: {primary_button}; color: {on_primary}; border: none; border-radius: 10px; padding: 0 18px; min-height: 40px; font-weight: 700; }}
 #primaryButton:hover {{ background: {primary_hover}; }}
 #primaryButton:pressed {{ background: {primary_pressed}; }}
+#dangerButton {{ background: {danger}; color: {on_primary}; border: none; border-radius: 10px; padding: 0 18px; min-height: 40px; font-weight: 700; }}
+#dangerButton:hover {{ background: {danger_button_hover}; }}
+#dangerButton:pressed {{ background: {danger_button_pressed}; }}
 #secondaryButton {{ background: {secondary}; color: {secondary_text}; border: none; border-radius: 10px; padding: 8px 16px; font-weight: 600; }}
 #secondaryButton:hover {{ background: {secondary_hover}; }}
 #memoFormatToolbar {{ background: transparent; border: none; spacing: 1px; padding: 0; }}
@@ -148,6 +153,10 @@ QDateTimeEdit:focus, QTimeEdit:focus, QLineEdit:focus, QSpinBox:focus, QDoubleSp
 #cleanList {{ border: none; background: transparent; }}
 #cleanList::item {{ background: {list_item}; border-radius: 8px; padding: 9px; margin: 2px 0; }}
 #cleanList::item:selected {{ background: {accent_soft}; color: {primary}; }}
+#jmQueueTabs::pane {{ border: none; background: transparent; padding-top: 8px; }}
+#jmQueueTabs QTabBar::tab {{ background: {secondary}; color: {secondary_text}; border: none; border-radius: 8px; padding: 9px 16px; margin-right: 8px; }}
+#jmQueueTabs QTabBar::tab:selected {{ background: {accent_soft}; color: {primary}; font-weight: 700; }}
+#jmQueueTabs QTabBar::tab:hover {{ background: {secondary_hover}; }}
 #animeListPanel {{ background: {surface}; border: 1px solid {border}; border-radius: 18px; padding: 10px; outline: none; }}
 #animeListPanel::item {{ background: transparent; border: none; padding: 0; margin: 0; }}
 #animeListPanel::item:selected {{ background: {accent_subtle}; border-radius: 13px; }}
