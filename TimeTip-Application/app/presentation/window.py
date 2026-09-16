@@ -694,19 +694,31 @@ class TimeTipWindow(JMMangaPageMixin, EmojiPageMixin, MemoPageMixin, CountdownPa
 
     def _unlock_jm_mode(self) -> None:
         if self.jm_nav_button.isVisible():
-            self.jm_unlock_feedback.setText("JM漫画下载模块已显示在左侧导航栏。")
+            self._leave_jm_mode()
             return
         self._jm_unlock_clicks += 1
         self._jm_unlock_timer.start()
         remaining = max(0, 5 - self._jm_unlock_clicks)
         if remaining:
-            self.jm_unlock_feedback.setText(f"再点击 {remaining} 次显示 JM漫画下载模块。")
             return
         self._reset_jm_unlock_clicks()
         self.jm_nav_button.setVisible(True)
-        self.jm_unlock_feedback.setText("JM漫画下载模块已显示在左侧导航栏。")
-        self.jm_unlock_button.setText("已解锁")
+        self.jm_unlock_button.setObjectName("dangerButton")
+        self.jm_unlock_button.setText("离开里模式")
+        self.jm_unlock_button.style().unpolish(self.jm_unlock_button)
+        self.jm_unlock_button.style().polish(self.jm_unlock_button)
         self._switch_page(8)
+
+    def _leave_jm_mode(self) -> None:
+        """Hide the optional JM page and return to settings."""
+        if self.pages.currentIndex() == 8:
+            self._switch_page(5)
+        self.jm_nav_button.setVisible(False)
+        self._reset_jm_unlock_clicks()
+        self.jm_unlock_button.setObjectName("primaryButton")
+        self.jm_unlock_button.setText("里模式")
+        self.jm_unlock_button.style().unpolish(self.jm_unlock_button)
+        self.jm_unlock_button.style().polish(self.jm_unlock_button)
 
     def save_theme(self) -> None:
         if hasattr(self, "theme_combo") and self.theme_combo.currentData():
@@ -1532,21 +1544,8 @@ class TimeTipWindow(JMMangaPageMixin, EmojiPageMixin, MemoPageMixin, CountdownPa
         theme_layout.addWidget(self.theme_description)
         layout.addWidget(theme_card)
         self.refresh_theme_options()
-        jm_card = Card()
-        jm_layout = QVBoxLayout(jm_card)
-        jm_layout.setContentsMargins(20, 14, 20, 14)
-        jm_row = QHBoxLayout()
-        jm_row.addWidget(QLabel("里模式", objectName="cardTitle"))
         self.jm_unlock_button = QPushButton("里模式", objectName="primaryButton")
-        self.jm_unlock_button.setToolTip("连续点击五次显示 JM漫画下载模块")
         self.jm_unlock_button.clicked.connect(self._unlock_jm_mode)
-        jm_row.addWidget(self.jm_unlock_button)
-        jm_row.addStretch()
-        jm_layout.addLayout(jm_row)
-        self.jm_unlock_feedback = QLabel("连续点击五次后显示 JM漫画下载模块。", objectName="cardHint")
-        self.jm_unlock_feedback.setWordWrap(True)
-        jm_layout.addWidget(self.jm_unlock_feedback)
-        layout.addWidget(jm_card)
         startup_card = Card()
         startup_layout = QVBoxLayout(startup_card)
         startup_layout.setContentsMargins(20, 14, 20, 14)
@@ -1684,6 +1683,7 @@ class TimeTipWindow(JMMangaPageMixin, EmojiPageMixin, MemoPageMixin, CountdownPa
         self.widget_settings_layout.setContentsMargins(0, 0, 0, 0)
         widget_layout.addWidget(self.widget_settings_container)
         layout.addWidget(widget_card)
+        layout.addWidget(self.jm_unlock_button, 0, Qt.AlignmentFlag.AlignRight)
         layout.addStretch()
         return self._scroll_page(page)
 

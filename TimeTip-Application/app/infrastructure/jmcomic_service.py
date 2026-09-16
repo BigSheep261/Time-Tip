@@ -24,7 +24,7 @@ def _load_jmcomic():
 
 
 def dependency_error() -> str:
-    return "JM 下载功能需要先安装 jmcomic、PyMuPDF 和 pyzipper 依赖。"
+    return "JM 下载组件加载失败，请重新安装完整版 TimeTip。"
 
 
 def _natural_key(path: Path, root: Path) -> list[tuple[int, int | str]]:
@@ -263,7 +263,7 @@ class JMComicService:
         try:
             import fitz  # type: ignore
         except ImportError as exc:
-            raise RuntimeError("PDF 打包需要安装 PyMuPDF。") from exc
+            raise RuntimeError("PDF 组件加载失败，请重新安装完整版 TimeTip。") from exc
         images = _image_files(source_dir)
         if not images:
             raise RuntimeError("下载目录中没有可打包的图片。")
@@ -292,7 +292,10 @@ class JMComicService:
         return output
 
     @staticmethod
-    def remove_path(path: Path) -> None:
+    def remove_path(path: Path, download_root: Path) -> None:
+        path, download_root = path.resolve(), download_root.resolve()
+        if path == download_root or not path.is_relative_to(download_root):
+            raise ValueError("只能删除 JM 下载目录内的文件或文件夹。")
         if path.is_dir():
             shutil.rmtree(path)
         elif path.is_file():
