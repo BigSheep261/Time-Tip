@@ -179,6 +179,20 @@ QDateTimeEdit:focus, QTimeEdit:focus, QLineEdit:focus, QSpinBox:focus, QDoubleSp
 #episodeName {{ color: {text}; }}
 #animeCardTitle {{ font-size: 16px; font-weight: 700; color: {text}; }}
 #animeCardMeta {{ color: {muted}; font-size: 12px; }}
+#tarotSpreadButton {{ background: {input}; color: {text}; border: 1px solid {card_border}; border-radius: 11px; padding: 8px 12px; text-align: left; font-weight: 700; }}
+#tarotSpreadButton:hover {{ background: {card_hover}; border-color: {accent_hover}; }}
+#tarotSpreadButton:pressed {{ background: {accent_soft}; }}
+#tarotCard {{ background: {input}; border: 1px solid {card_border}; border-radius: 14px; }}
+#tarotCard[revealed="true"] {{ background: {focus_surface}; border-color: {accent_hover}; }}
+#tarotPosition {{ color: {muted}; font-size: 12px; font-weight: 700; }}
+#tarotOrientation {{ background: {accent_soft}; color: {primary}; border-radius: 7px; padding: 3px 7px; font-size: 11px; font-weight: 700; }}
+#tarotBack {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {hero_start}, stop:1 {hero_end}); color: {on_primary}; border: none; border-radius: 11px; font-size: 20px; font-weight: 700; }}
+#tarotBack:hover {{ background: {primary_hover}; }}
+#tarotBack:disabled {{ background: {accent_soft}; color: {primary}; font-size: 21px; }}
+#tarotCardName {{ color: {muted}; font-size: 12px; }}
+#tarotMeaning {{ color: {text}; font-size: 14px; }}
+#tarotQuestion {{ color: {primary}; background: {accent_subtle}; border-radius: 8px; padding: 8px 10px; }}
+#tarotSummary {{ color: {secondary_text}; background: {accent_subtle}; border: 1px solid {accent_hover}; border-radius: 10px; padding: 10px 12px; }}
 #animeCategoryChip {{ background: {accent_soft}; color: {primary}; border-radius: 7px; padding: 3px 8px; font-size: 11px; font-weight: 700; }}
 #animeCover {{ background: {accent_soft}; border-radius: 11px; }}
 #countdownCard {{ background: {input}; border: 1px solid {card_border}; border-radius: 13px; }}
