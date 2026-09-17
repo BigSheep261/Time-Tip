@@ -57,6 +57,7 @@ from app.presentation.countdowns import CountdownPageMixin
 from app.presentation.memos import MemoPageMixin
 from app.presentation.emojis import EmojiPageMixin
 from app.presentation.jm_manga import JMMangaPageMixin
+from app.presentation.tarot import TarotPageMixin
 from app.presentation.widgets import Card, DashboardTile, ResizeHandle, WidgetGrid
 from app.infrastructure.store import Store
 from app.infrastructure import startup
@@ -602,7 +603,7 @@ class AnimeFolderDialog(QDialog):
         self.accept()
 
 
-class TimeTipWindow(JMMangaPageMixin, EmojiPageMixin, MemoPageMixin, CountdownPageMixin, QMainWindow):
+class TimeTipWindow(TarotPageMixin, JMMangaPageMixin, EmojiPageMixin, MemoPageMixin, CountdownPageMixin, QMainWindow):
     def __init__(self, store: Store | None = None) -> None:
         super().__init__()
         self.store = store or Store()
@@ -839,7 +840,14 @@ class TimeTipWindow(JMMangaPageMixin, EmojiPageMixin, MemoPageMixin, CountdownPa
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
         sidebar.setFixedWidth(152)
-        side_layout = QVBoxLayout(sidebar)
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_scroll = QScrollArea()
+        sidebar_scroll.setWidgetResizable(True)
+        sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        sidebar_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        sidebar_content = QWidget()
+        side_layout = QVBoxLayout(sidebar_content)
         side_layout.setContentsMargins(10, 14, 10, 14)
         side_layout.setSpacing(7)
         side_label = QLabel("工作台")
@@ -847,7 +855,7 @@ class TimeTipWindow(JMMangaPageMixin, EmojiPageMixin, MemoPageMixin, CountdownPa
         side_layout.addWidget(side_label)
         self.nav_buttons: list[QPushButton] = []
         nav_by_index = {}
-        for text, page_index in [("概览", 0), ("日历提醒", 1), ("番茄钟", 2), ("备忘录", 3), ("倒计时", 4), ("设置", 5), ("表情包", 7), ("看番提醒", 6), ("JM漫画下载", 8)]:
+        for text, page_index in [("概览", 0), ("日历提醒", 1), ("番茄钟", 2), ("备忘录", 3), ("倒计时", 4), ("设置", 5), ("表情包", 7), ("看番提醒", 6), ("JM漫画下载", 8), ("占卜", 9)]:
             button = QPushButton(text)
             button.setObjectName("navButton")
             button.setCheckable(True)
@@ -855,7 +863,7 @@ class TimeTipWindow(JMMangaPageMixin, EmojiPageMixin, MemoPageMixin, CountdownPa
             button.clicked.connect(lambda _checked, i=page_index: self._switch_page(i))
             nav_by_index[page_index] = button
         # Keep page-index order for state updates while placing 设置 at the end.
-        for page_index in (0, 1, 2, 3, 4, 7, 6, 5):
+        for page_index in (0, 1, 2, 3, 4, 7, 6, 9, 5):
             side_layout.addWidget(nav_by_index[page_index])
         self.jm_nav_button = nav_by_index[8]
         self.jm_nav_button.setVisible(False)
@@ -863,11 +871,14 @@ class TimeTipWindow(JMMangaPageMixin, EmojiPageMixin, MemoPageMixin, CountdownPa
         # Keep the public legacy list stable for existing integrations; JM is
         # an opt-in navigation item tracked separately until it is unlocked.
         self.nav_buttons = [nav_by_index[index] for index in range(8)]
-        self._all_nav_buttons = self.nav_buttons + [self.jm_nav_button]
+        self.tarot_nav_button = nav_by_index[9]
+        self._all_nav_buttons = self.nav_buttons + [self.jm_nav_button, self.tarot_nav_button]
         side_layout.addStretch()
         hint = QLabel(f"私人效率工具 {DISPLAY_VERSION}\n数据仅保存在本机")
         hint.setObjectName("sideHint")
         side_layout.addWidget(hint)
+        sidebar_scroll.setWidget(sidebar_content)
+        sidebar_layout.addWidget(sidebar_scroll)
         body_layout.addWidget(sidebar)
 
         self.pages = QStackedWidget()
@@ -880,6 +891,7 @@ class TimeTipWindow(JMMangaPageMixin, EmojiPageMixin, MemoPageMixin, CountdownPa
         self.pages.addWidget(self._anime_page())
         self.pages.addWidget(self._emoji_page())
         self.pages.addWidget(self._scroll_page(self._jm_page()))
+        self.pages.addWidget(self._tarot_page())
         body_layout.addWidget(self.pages, 1)
         root_layout.addWidget(body, 1)
         self.setCentralWidget(root)
