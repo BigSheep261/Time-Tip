@@ -1,17 +1,21 @@
-"""QSettings persistence and legacy migration."""
+"""Persistence facade for SQLite and isolated INI compatibility profiles."""
 from __future__ import annotations
 import json
 import zipfile
 import uuid
 import shutil
 from pathlib import Path
-from datetime import date, datetime, timedelta
+from datetime import datetime
 from app.domain.countdowns import validate_cycle
-from app.domain.anime import normalize_tags, validate_anime
+from app.application.anime_records import normalize_anime_records
 from app.infrastructure.database import DataStore
+from app.infrastructure.schema import BACKUP_VERSION, COLLECTION_KEYS, SETTING_KEYS
 from PyQt6.QtCore import QSettings, QDateTime, Qt
 
 class Store:
+    KEYS = SETTING_KEYS
+    COLLECTIONS = COLLECTION_KEYS
+
     def __init__(self, path: str | None = None) -> None:
         self._backend = DataStore() if path is None else None
         self.settings = QSettings(path, QSettings.Format.IniFormat) if path else None
@@ -40,35 +44,17 @@ class Store:
     def anime(self) -> list[dict]:
         if self._backend: return self._backend.anime()
         data = self.read_json("anime", [])
-        if not isinstance(data, list): return []
-        valid = []
-        for source in data:
-            if not isinstance(source, dict): continue
-            item = source.copy()
-            legacy_schedule = "start_date" not in source and bool(source.get("air_days"))
-            item.setdefault("id", uuid.uuid4().hex)
-            if legacy_schedule:
-                item["air_days"] = [source["air_days"][0]]
-                item["start_date"] = (date.today() - timedelta(days=3650)).isoformat()
-                item["end_date"] = (date.today() + timedelta(days=3650)).isoformat()
-                item["episode_count"] = 999
-                item["legacy_compat"] = True
-            item.setdefault("start_date", "2026-01-01"); item.setdefault("end_date", "2026-03-31"); item.setdefault("group", "未分组")
-            item.setdefault("air_days", [0]); item.setdefault("episode_count", 12); item.setdefault("progress", 0); item.setdefault("folder", ""); item.setdefault("category", "watching"); item.setdefault("cover", "")
-            item["tags"] = normalize_tags(item.get("tags", []))
-            try: validate_anime(item)
-            except ValueError: continue
-            valid.append(item)
+        valid = normalize_anime_records(data)
         if valid != data: self.write_json("anime", valid)
         return valid
 
     def export_data(self, path: str) -> None:
         if self._backend:
             self._backend.export_data(path); return
-        payload = {"version": 2, "settings": {}, "collections": {}}
-        for key in ("work", "break", "salary", "widgets", "window_geometry", "date_format", "theme", "target", "target_notified", "memo", "update_auto_check"):
+        payload = {"version": BACKUP_VERSION, "settings": {}, "collections": {}}
+        for key in self.KEYS:
             payload["settings"][key] = self.get(key, "")
-        for key in ("countdowns", "memos", "reminders", "anime", "anime_groups", "emojis", "emoji_categories", "jm_favorites"):
+        for key in self.COLLECTIONS:
             payload["collections"][key] = self.read_json(key, [])
         if Path(path).suffix.lower() == ".zip":
             with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -87,7 +73,11 @@ class Store:
             self._backend.import_data(path); return
         if Path(path).suffix.lower() == ".zip":
             with zipfile.ZipFile(path) as archive:
-                payload = json.loads(archive.read("data.json").decode("utf-8"))
+                try:
+                    payload = json.loads(archive.read("data.json").decode("utf-8"))
+                except KeyError as error:
+                    raise ValueError("导入包缺少 data.json。") from error
+                DataStore._validate_payload(payload)
                 root = self.asset_root("emojis").resolve()
                 for name in archive.namelist():
                     if not name.startswith("emojis/") or name.endswith("/"): continue
@@ -97,12 +87,11 @@ class Store:
                         destination.parent.mkdir(parents=True, exist_ok=True)
                         destination.write_bytes(archive.read(name))
         else: payload = json.loads(Path(path).read_text(encoding="utf-8"))
-        if not isinstance(payload, dict) or not isinstance(payload.get("settings"), dict) or not isinstance(payload.get("collections"), dict):
-            raise ValueError("数据文件格式不受支持。")
+        DataStore._validate_payload(payload)
         for key, value in payload["settings"].items():
-            if key in ("work", "break", "salary", "widgets", "window_geometry", "date_format", "theme", "target", "target_notified", "memo", "update_auto_check"): self.set(key, value)
+            if key in self.KEYS: self.set(key, value)
         for key, value in payload["collections"].items():
-            if key in ("countdowns", "memos", "reminders", "anime", "anime_groups", "emojis", "emoji_categories", "jm_favorites"): self.write_json(key, value)
+            if key in self.COLLECTIONS: self.write_json(key, value)
 
     def save_anime(self, items: list[dict]) -> None:
         if self._backend: self._backend.save_anime(items); return
@@ -138,6 +127,13 @@ class Store:
             root = Path(self.settings.fileName()).resolve().parent / name
         root.mkdir(parents=True, exist_ok=True)
         return root
+
+    def close(self) -> None:
+        """Flush and release the active persistence backend."""
+        if self._backend:
+            self._backend.close()
+        elif self.settings is not None:
+            self.settings.sync()
 
     def migrate_collections(self):
         if self._backend:

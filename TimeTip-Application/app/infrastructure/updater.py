@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
-import re
 import subprocess
 import tempfile
 import urllib.error
@@ -13,6 +13,11 @@ from pathlib import Path
 
 from PyQt6.QtCore import QThread, QObject, pyqtSignal
 
+from app.application.update_security import (
+    expected_sha256 as _expected_sha256,
+    safe_update_filename as _safe_filename,
+    validated_http_url as _validated_http_url,
+)
 from app.version import APP_VERSION, is_newer
 
 DEFAULT_UPDATE_URL = "http://47.116.193.23:8787/api/client/update/check"
@@ -20,13 +25,6 @@ DEFAULT_UPDATE_URL = "http://47.116.193.23:8787/api/client/update/check"
 
 def _source_label(source: str) -> str:
     return {"github": "GitHub 自动获取", "manual": "管理员手动上传"}.get(source, "未知来源")
-
-
-def _safe_filename(filename: str) -> str:
-    name = Path(str(filename)).name
-    name = re.sub(r"[^A-Za-z0-9._-]", "_", name)
-    return name if name.lower().endswith(".exe") else "TimeTip-Update.exe"
-
 
 class _UpdateWorker(QThread):
     checked = pyqtSignal(dict)
@@ -43,7 +41,7 @@ class _UpdateWorker(QThread):
 
     def _request_json(self, url: str) -> dict:
         request = urllib.request.Request(
-            url,
+            _validated_http_url(url),
             headers={"User-Agent": "TimeTip/" + APP_VERSION, "Accept": "application/json"},
         )
         with urllib.request.urlopen(request, timeout=10) as response:
@@ -61,7 +59,9 @@ class _UpdateWorker(QThread):
         source = str(payload.get("source", "unknown")).strip().lower() or "unknown"
         raw_download_url = str(payload.get("downloadUrl", "")).strip()
         if raw_download_url:
-            download_url = urllib.parse.urljoin(self.metadata_url, raw_download_url)
+            download_url = _validated_http_url(
+                urllib.parse.urljoin(self.metadata_url, raw_download_url)
+            )
         else:
             download_url = ""
         has_package = bool(version and download_url)
@@ -86,23 +86,36 @@ class _UpdateWorker(QThread):
         if not self.package_url:
             raise ValueError("更新服务没有提供安装包下载地址。")
         request = urllib.request.Request(
-            self.package_url,
+            _validated_http_url(self.package_url),
             headers={"User-Agent": "TimeTip/" + APP_VERSION, "Accept": "application/octet-stream"},
         )
-        with urllib.request.urlopen(request, timeout=60) as response:
-            total = int(response.headers.get("Content-Length", "0") or 0)
-            temp_dir = Path(tempfile.gettempdir()) / "TimeTip-updates"
-            temp_dir.mkdir(parents=True, exist_ok=True)
-            destination = temp_dir / ("TimeTip-Setup-" + self.metadata.get("version", APP_VERSION) + "-download.exe")
-            received = 0
-            with destination.open("wb") as output:
+        expected_hash = _expected_sha256(self.metadata)
+        temp_dir = Path(tempfile.gettempdir()) / "TimeTip-updates"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        destination = temp_dir / _safe_filename(
+            self.metadata.get("filename", "TimeTip-Update.exe")
+        )
+        partial = destination.with_suffix(destination.suffix + ".part")
+        digest = hashlib.sha256()
+        received = 0
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response, partial.open("wb") as output:
+                total = int(response.headers.get("Content-Length", "0") or 0)
                 while True:
                     chunk = response.read(1024 * 1024)
                     if not chunk:
                         break
                     output.write(chunk)
+                    digest.update(chunk)
                     received += len(chunk)
                     self.progress.emit(received, total)
+            if total and received != total:
+                raise ValueError("更新包下载不完整，请重试。")
+            if expected_hash and digest.hexdigest() != expected_hash:
+                raise ValueError("更新包完整性校验失败，请勿安装。")
+            os.replace(partial, destination)
+        finally:
+            partial.unlink(missing_ok=True)
         self.downloaded.emit(str(destination))
 
     def run(self) -> None:
