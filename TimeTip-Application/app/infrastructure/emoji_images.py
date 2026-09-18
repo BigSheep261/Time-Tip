@@ -11,7 +11,13 @@ from PyQt6.QtGui import QImage, QImageReader
 def image_fingerprint(image: QImage) -> bytes:
     normalized = image.convertToFormat(QImage.Format.Format_RGBA8888)
     digest = hashlib.sha256(struct.pack("!II", normalized.width(), normalized.height()))
-    digest.update(bytes(normalized.constBits())[:normalized.sizeInBytes()])
+    # PyQt6 exposes constBits() as a sip.voidptr without a known Python-side
+    # length.  Calling bytes(pointer) directly raises IndexError on startup
+    # when the emoji library contains an image.  Set the exact Qt buffer size
+    # before copying the pixels so this works in source and frozen builds.
+    pixels = normalized.constBits()
+    pixels.setsize(normalized.sizeInBytes())
+    digest.update(bytes(pixels))
     return digest.digest()
 
 
