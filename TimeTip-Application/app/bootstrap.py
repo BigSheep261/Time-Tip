@@ -9,6 +9,7 @@ from app.infrastructure.store import Store
 from app.presentation.window import TimeTipWindow, make_app_icon
 from app.presentation.theme import APP_NAME, STYLESHEET
 from app.version import APP_VERSION
+from app.features import FEATURE_MODULES
 
 def main() -> None:
     app = QApplication(sys.argv)
@@ -36,10 +37,11 @@ def main() -> None:
     app.setStyle("Fusion")
     app.setStyleSheet(STYLESHEET)
     store = Store(profile)
-    window = TimeTipWindow(store)
+    window = TimeTipWindow(store, feature_specs=FEATURE_MODULES)
     guard.show_requested.connect(window.restore_window)
     guard.quit_requested.connect(window.quit_app)
     app.aboutToQuit.connect(window.jm_wait_for_shutdown)
+    app.aboutToQuit.connect(window.modules.shutdown)
     app.aboutToQuit.connect(store.close)
     app.aboutToQuit.connect(guard.close)
     window.show()

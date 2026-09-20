@@ -1,7 +1,7 @@
 """Application version shared by the UI, updater and release tooling."""
 
 APP_NAME = "TimeTip"
-APP_VERSION = "1.5.5"
+APP_VERSION = "1.5.7"
 DISPLAY_VERSION = "V" + APP_VERSION
 
 

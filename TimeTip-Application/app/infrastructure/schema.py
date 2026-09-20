@@ -12,6 +12,7 @@ SETTING_KEYS = (
     "target_notified",
     "memo",
     "update_auto_check",
+    "module_states",
 )
 
 COLLECTION_KEYS = (

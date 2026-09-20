@@ -16,7 +16,7 @@ a = Analysis(
     ],
     # jmcomic loads client implementations dynamically; collect them so the
     # frozen Windows build behaves like the source build.
-    hiddenimports=collect_submodules('jmcomic') + ['fitz', 'pyzipper'],
+    hiddenimports=collect_submodules('jmcomic') + collect_submodules('app.features') + ['fitz', 'pyzipper'],
     hookspath=[],
     runtime_hooks=[],
     excludes=[],
