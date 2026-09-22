@@ -4,22 +4,27 @@
     "id": "yoru-no-uta",
     "title": "夜の歌",
     "artist": "歌手名",
-    "cover": ""
+    "cover": "",
+    "language": "ja"
   },
   "lyrics": [
     {
       "id": "line-001",
-      "text": "ここに第一行の歌词"
+      "romaji": "koko ni daiichi gyou no kashi",
+      "text": "ここに第一行の歌詞",
+      "translation": "这里填写第一行歌词的翻译"
     },
     {
       "id": "line-002",
-      "text": "ここに第二行の歌词"
+      "romaji": "koko ni daini gyou no kashi",
+      "text": "ここに第二行の歌詞",
+      "translation": "这里填写第二行歌词的翻译"
     }
   ],
   "vocab": [
     {
       "id": "word-001",
-      "surface": "歌词",
+      "surface": "歌詞",
       "reading": "かし",
       "meaning": "歌词；歌曲中的文字",
       "note": "可选的补充说明"

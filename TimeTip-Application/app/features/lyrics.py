@@ -33,6 +33,7 @@ from app.presentation.widgets import Card
 
 SCHEMA_VERSION = 1
 STORAGE_KEY = "lyrics_songs"
+SPLITS_STORAGE_KEY = "lyrics_splits"
 
 TEMPLATE = {
     "version": 1,
@@ -41,21 +42,49 @@ TEMPLATE = {
         "title": "夜の歌",
         "artist": "歌手名",
         "cover": "",
+        "language": "ja",
     },
     "lyrics": [
-        {"id": "line-001", "text": "ここに第一行の歌词"},
-        {"id": "line-002", "text": "ここに第二行の歌词"},
+        {
+            "id": "line-001",
+            "romaji": "koko ni daiichi gyou no kashi",
+            "text": "ここに第一行の歌詞",
+            "translation": "这里填写第一行歌词的翻译",
+        },
+        {
+            "id": "line-002",
+            "romaji": "koko ni daini gyou no kashi",
+            "text": "ここに第二行の歌詞",
+            "translation": "这里填写第二行歌词的翻译",
+        },
     ],
     "vocab": [
         {
             "id": "word-001",
-            "surface": "歌词",
+            "surface": "歌詞",
             "reading": "かし",
             "meaning": "歌词；歌曲中的文字",
             "note": "可选的补充说明",
         }
     ],
 }
+
+
+_LANGUAGE_ALIASES = {
+    "zh": "zh", "cn": "zh", "chinese": "zh", "中文": "zh", "汉语": "zh",
+    "ja": "ja", "jp": "ja", "japanese": "ja", "日本語": "ja", "日语": "ja", "日文": "ja",
+    "en": "en", "英语": "en", "英文": "en", "english": "en",
+    "ko": "ko", "kr": "ko", "韩语": "ko", "한국어": "ko", "korean": "ko",
+}
+
+
+def _language(value, label: str = "song.language") -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label}必须是非空字符串。")
+    normalized_value = value.strip().lower()
+    # Keep the format open to other languages; Japanese is the only language
+    # with special rendering rules at the moment.
+    return _LANGUAGE_ALIASES.get(normalized_value, normalized_value)
 
 
 def _required_text(value, label: str) -> str:
@@ -86,6 +115,8 @@ def validate_song_payload(payload: object) -> dict:
     title = _required_text(raw_song.get("title"), "song.title")
     artist = _optional_text(raw_song.get("artist", ""), "song.artist")
     cover = _optional_text(raw_song.get("cover", ""), "song.cover")
+    # Old imports did not have a language field and are treated as Chinese.
+    language = _language(raw_song.get("language", payload.get("language", "zh")))
 
     raw_lyrics = payload.get("lyrics")
     if not isinstance(raw_lyrics, list) or not raw_lyrics:
@@ -96,11 +127,34 @@ def validate_song_payload(payload: object) -> dict:
         if not isinstance(line, dict):
             raise ValueError(f"lyrics[{index}] 必须是对象。")
         line_id = _required_text(line.get("id"), f"lyrics[{index}].id")
-        text = _required_text(line.get("text"), f"lyrics[{index}].text")
+        raw_text = line.get("text", line.get("original"))
+        text = _required_text(raw_text, f"lyrics[{index}].text")
+        line_language = _language(line.get("language", language), f"lyrics[{index}].language")
         if line_id in lyric_ids:
             raise ValueError(f"歌词行 ID 重复：{line_id}")
         lyric_ids.add(line_id)
-        lyrics.append({"id": line_id, "text": text})
+        normalized_line = {"id": line_id}
+        if "language" in line:
+            normalized_line["language"] = line_language
+        if line_language == "ja":
+            romaji = line.get(
+                "romaji",
+                line.get("romanization", line.get("romanized", line.get("roman", ""))),
+            )
+            romaji = _required_text(romaji, f"lyrics[{index}].romaji")
+            translation = _required_text(
+                line.get("translation", ""), f"lyrics[{index}].translation"
+            )
+            normalized_line.update({"romaji": romaji, "text": text, "translation": translation})
+        else:
+            normalized_line["text"] = text
+            if "translation" in line:
+                normalized_line["translation"] = _optional_text(
+                    line.get("translation"), f"lyrics[{index}].translation"
+                )
+        # Split points are a local learning preference. They are deliberately
+        # ignored here so imported song JSON never owns this UI state.
+        lyrics.append(normalized_line)
 
     raw_vocab = payload.get("vocab")
     if not isinstance(raw_vocab, list):
@@ -135,6 +189,7 @@ def validate_song_payload(payload: object) -> dict:
         "title": title,
         "artist": artist,
         "cover": cover,
+        "language": language,
         "lyrics": lyrics,
         "vocab": vocab,
     }
@@ -151,6 +206,7 @@ def _normalize_stored_song(record: object) -> dict | None:
             "title": record.get("title"),
             "artist": record.get("artist", ""),
             "cover": record.get("cover", ""),
+            "language": record.get("language", "zh"),
         },
         "lyrics": record.get("lyrics"),
         "vocab": record.get("vocab"),
@@ -161,56 +217,138 @@ def _normalize_stored_song(record: object) -> dict | None:
         return None
 
 
-def highlighted_lyrics_html(
-    lyrics: Iterable[dict], vocab: Iterable[dict]
+def _language_for_line(line: dict, language: str | None) -> str:
+    value = line.get("language", language or "zh")
+    try:
+        return _language(value)
+    except ValueError:
+        return "zh"
+
+
+def _split_positions(value, text_length: int) -> list[int]:
+    if isinstance(value, int) and not isinstance(value, bool):
+        value = [value]
+    elif isinstance(value, (str, bytes)):
+        return []
+    else:
+        try:
+            value = list(value)
+        except TypeError:
+            return []
+    return sorted({
+        position for position in value
+        if type(position) is int and 0 < position < text_length
+    })
+
+
+def _highlight_text_html(
+    text: str,
+    words: list[dict],
+    split_at: int | Iterable[int] | None = None,
+    text_color: str = "inherit",
 ) -> str:
-    """Render exact surface matches as safe, clickable HTML links."""
+    """Escape a line, bold exact vocabulary matches, and show split dividers."""
+    matches = []
+    for word in words:
+        surface = word["surface"]
+        offset = 0
+        while True:
+            start = text.find(surface, offset)
+            if start < 0:
+                break
+            matches.append((start, len(surface), word["id"]))
+            offset = start + len(surface)
+    # Longest word wins when two entries begin at the same character.
+    matches.sort(key=lambda item: (item[0], -item[1]))
+    selected = []
+    end = 0
+    for start, length, word_id in matches:
+        if start < end:
+            continue
+        selected.append((start, length, word_id))
+        end = start + length
+
+    splits = _split_positions(split_at, len(text))
+    boundaries = {0, len(text), *splits}
+    for start, length, _word_id in selected:
+        boundaries.add(start)
+        boundaries.add(start + length)
+    ordered_boundaries = sorted(boundaries)
+    chunks = []
+    for left, right in zip(ordered_boundaries, ordered_boundaries[1:]):
+        if left in splits:
+            chunks.append(
+                f'<span class="lyricsSplit" style="padding:0 8px; color:{text_color}; '
+                'font-weight:400;">│</span>'
+            )
+        piece = html.escape(text[left:right])
+        match = next(
+            (item for item in selected if item[0] <= left and right <= item[0] + item[1]),
+            None,
+        )
+        if match is None:
+            chunks.append(piece)
+            continue
+        word_id = html.escape(str(match[2]), quote=True)
+        chunks.append(
+            f'<a href="vocab:{word_id}" style="color:{text_color}; '
+            f'font-weight:700; text-decoration:none;"><strong>{piece}</strong></a>'
+        )
+    return "".join(chunks)
+
+
+def highlighted_lyrics_html(
+    lyrics: Iterable[dict], vocab: Iterable[dict], language: str | None = None,
+    split_points: dict[str, Iterable[int]] | None = None,
+    colors: dict | None = None,
+) -> str:
+    """Render lyrics safely with bold vocabulary matches and Japanese lyric rows."""
     words = [
         word for word in vocab
         if isinstance(word, dict) and isinstance(word.get("surface"), str)
         and word.get("surface")
     ]
     words.sort(key=lambda word: len(word["surface"]), reverse=True)
+    palette = {
+        "text": "#1D1D1F",
+        "muted": "#6E6E73",
+        "primary": "#5E5CE6",
+    }
+    if colors:
+        palette.update({key: colors[key] for key in palette if key in colors})
+    text_color = html.escape(str(palette["text"]), quote=True)
+    muted_color = html.escape(str(palette["muted"]), quote=True)
+    primary_color = html.escape(str(palette["primary"]), quote=True)
     paragraphs = []
     for line in lyrics:
+        if not isinstance(line, dict):
+            continue
         text = str(line.get("text", ""))
-        matches = []
-        for word in words:
-            surface = word["surface"]
-            offset = 0
-            while True:
-                start = text.find(surface, offset)
-                if start < 0:
-                    break
-                matches.append((start, len(surface), word["id"]))
-                offset = start + len(surface)
-        # Longest word wins when two entries begin at the same character.
-        matches.sort(key=lambda item: (item[0], -item[1]))
-        selected = []
-        end = 0
-        for start, length, word_id in matches:
-            if start < end:
-                continue
-            selected.append((start, length, word_id))
-            end = start + length
-
-        chunks = []
-        cursor = 0
-        for start, length, word_id in selected:
-            chunks.append(html.escape(text[cursor:start]))
-            surface = html.escape(text[start:start + length])
-            chunks.append(
-                f'<a href="vocab:{html.escape(str(word_id), quote=True)}" '
-                'style="color:#5E5CE6; font-weight:700; '
-                'text-decoration:none; background:#ECE9FF; '
-                'border-radius:4px; padding:1px 3px;">'
-                f"{surface}</a>"
+        split_at = line.get("split_at")
+        if split_points is not None:
+            split_at = split_points.get(str(line.get("id")), [])
+        rendered_text = _highlight_text_html(text, words, split_at, text_color)
+        line_language = _language_for_line(line, language)
+        if line_language == "ja":
+            romaji = html.escape(
+                str(line.get("romaji", line.get("romanization", line.get("roman", ""))))
             )
-            cursor = start + length
-        chunks.append(html.escape(text[cursor:]))
-        paragraphs.append(
-            f'<p style="margin:0 0 12px 0; line-height:1.8;">{"".join(chunks)}</p>'
-        )
+            translation = html.escape(str(line.get("translation", "")))
+            paragraphs.append(
+                '<div style="margin:0 0 32px 0; padding:0; line-height:1.35;">'
+                f'<div style="margin:0; padding:0; color:{muted_color}; '
+                f'font-size:13px; line-height:1.25;">{romaji}</div>'
+                f'<div style="margin:2px 0 3px 0; padding:0; color:{text_color}; '
+                f'font-size:17px; line-height:1.45;">{rendered_text}</div>'
+                f'<div style="margin:0; padding:0; color:{primary_color}; '
+                f'font-size:13px; line-height:1.25;">{translation}</div>'
+                '</div>'
+            )
+        else:
+            paragraphs.append(
+                f'<div style="margin:0 0 12px 0; color:{text_color}; '
+                f'line-height:1.8;">{rendered_text}</div>'
+            )
     return "".join(paragraphs)
 
 
@@ -264,7 +402,11 @@ class LyricsModule(FeatureModule):
         super().__init__(context)
         self.page = None
         self.songs: list[dict] = []
+        self.split_points: dict[str, dict[str, list[int]]] = {}
         self.current_song: dict | None = None
+        self._selected_lyric_text = ""
+        self._selected_lyric_block_text = ""
+        self._selected_lyric_offset = 0
 
     def create_page(self):
         self.page = QWidget()
@@ -289,7 +431,7 @@ class LyricsModule(FeatureModule):
         heading = QVBoxLayout()
         heading.addWidget(QLabel("歌词学习", objectName="pageTitle"))
         subtitle = QLabel(
-            "导入歌曲歌词和生词，双击卡片打开歌词；点击高亮词查看含义。"
+            "导入歌曲歌词和生词，双击卡片打开歌词；点击加粗词查看含义。"
         )
         subtitle.setObjectName("pageSubtitle")
         subtitle.setWordWrap(True)
@@ -344,18 +486,31 @@ class LyricsModule(FeatureModule):
         lyrics_card = Card("lyricsTextCard")
         lyrics_layout = QVBoxLayout(lyrics_card)
         lyrics_layout.setContentsMargins(20, 18, 20, 18)
+        lyrics_actions = QHBoxLayout()
+        lyrics_hint = QLabel("选中一句中的单词后，可在该词后添加分割点；一行可以添加多个。")
+        lyrics_hint.setObjectName("cardHint")
+        lyrics_hint.setWordWrap(True)
+        lyrics_actions.addWidget(lyrics_hint, 1)
+        self.split_button = QPushButton("添加分割点", objectName="secondaryButton")
+        self.split_button.clicked.connect(self._split_selected_line)
+        lyrics_actions.addWidget(self.split_button)
+        self.clear_split_button = QPushButton("清除本行分割", objectName="secondaryButton")
+        self.clear_split_button.clicked.connect(self._clear_selected_line_split)
+        lyrics_actions.addWidget(self.clear_split_button)
+        lyrics_layout.addLayout(lyrics_actions)
         self.lyrics_browser = QTextBrowser()
         self.lyrics_browser.setOpenLinks(False)
         self.lyrics_browser.setOpenExternalLinks(False)
         self.lyrics_browser.setReadOnly(True)
         self.lyrics_browser.anchorClicked.connect(self._show_word)
+        self.lyrics_browser.selectionChanged.connect(self._remember_lyric_selection)
         lyrics_layout.addWidget(self.lyrics_browser)
         layout.addWidget(lyrics_card, 1)
 
         self.word_panel = Card("lyricsWordPanel")
         word_layout = QVBoxLayout(self.word_panel)
         word_layout.setContentsMargins(18, 14, 18, 14)
-        self.word_title = QLabel("点击高亮词查看详情")
+        self.word_title = QLabel("点击加粗词查看详情")
         self.word_title.setObjectName("lyricsWordTitle")
         word_layout.addWidget(self.word_title)
         self.word_reading = QLabel("")
@@ -372,14 +527,90 @@ class LyricsModule(FeatureModule):
         self.stack.addWidget(self.detail_page)
 
     def start(self):
-        self.context.subscribe("data.reloaded", lambda _payload=None: self._load_songs())
+        self.context.subscribe("data.reloaded", lambda _payload=None: self._reload_data())
+        self.context.subscribe("theme.changed", lambda _theme_id=None: self._refresh_current_lyrics())
+        self._load_splits()
         self._load_songs()
+
+    def _reload_data(self):
+        self._load_splits()
+        self._load_songs()
+
+    def _load_splits(self):
+        raw = self.context.store.read_json(SPLITS_STORAGE_KEY, [])
+        loaded: dict[str, dict[str, list[int]]] = {}
+        if isinstance(raw, list):
+            entries = []
+            for item in raw:
+                if isinstance(item, dict):
+                    entries.append((item.get("song_id"), item.get("line_id"), item.get("positions")))
+        elif isinstance(raw, dict):
+            # Accept the first local representation for a seamless upgrade.
+            entries = [
+                (song_id, line_id, positions)
+                for song_id, song_points in raw.items()
+                if isinstance(song_points, dict)
+                for line_id, positions in song_points.items()
+            ]
+        else:
+            entries = []
+        for song_id, line_id, positions in entries:
+            if not isinstance(song_id, str) or not isinstance(line_id, str):
+                continue
+            values = positions if isinstance(positions, (list, tuple, set)) else [positions]
+            valid = sorted({
+                value for value in values
+                if type(value) is int and value > 0
+            })
+            if valid:
+                loaded.setdefault(song_id, {})[line_id] = valid
+        self.split_points = loaded
+
+    def _save_splits(self):
+        records = [
+            {"song_id": song_id, "line_id": line_id, "positions": positions}
+            for song_id, lines in self.split_points.items()
+            for line_id, positions in lines.items()
+            if positions
+        ]
+        self.context.store.write_json(SPLITS_STORAGE_KEY, records)
+
+    def _legacy_splits(self, raw: object) -> dict[str, dict[str, list[int]]]:
+        """Migrate split points written by the previous lyrics implementation."""
+        migrated: dict[str, dict[str, list[int]]] = {}
+        if not isinstance(raw, list):
+            return migrated
+        for song in raw:
+            if not isinstance(song, dict) or not isinstance(song.get("id"), str):
+                continue
+            lines = song.get("lyrics")
+            if not isinstance(lines, list):
+                continue
+            for line in lines:
+                if not isinstance(line, dict) or not isinstance(line.get("id"), str):
+                    continue
+                text = line.get("text", line.get("original", ""))
+                if not isinstance(text, str):
+                    continue
+                positions = _split_positions(line.get("split_at"), len(text))
+                if positions:
+                    migrated.setdefault(song["id"], {})[line["id"]] = positions
+        return migrated
 
     def _load_songs(self):
         raw = self.context.store.read_json(STORAGE_KEY, [])
+        legacy_splits = self._legacy_splits(raw)
+        for song_id, lines in legacy_splits.items():
+            for line_id, positions in lines.items():
+                existing = self.split_points.setdefault(song_id, {}).setdefault(line_id, [])
+                self.split_points[song_id][line_id] = sorted(set(existing) | set(positions))
         self.songs = [
             song for item in raw if (song := _normalize_stored_song(item)) is not None
         ] if isinstance(raw, list) else []
+        if legacy_splits:
+            # Strip legacy split fields from the song collection after migration.
+            self._save_songs()
+            self._save_splits()
         if self.page is not None:
             self._render_cards()
             if self.current_song is not None:
@@ -404,7 +635,7 @@ class LyricsModule(FeatureModule):
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
             empty.setMinimumHeight(180)
             self.cards_layout.insertWidget(0, empty)
-            self.library_status.setText("支持 version 1 的固定 JSON 格式。")
+            self.library_status.setText("支持 version 1 JSON 格式，可在 song.language 中区分语种。")
             return
         self.library_status.setText(f"已保存 {len(self.songs)} 首歌曲。双击卡片打开歌词。")
         for song in self.songs:
@@ -421,21 +652,115 @@ class LyricsModule(FeatureModule):
             return
         self.current_song = song
         self.detail_title.setText(song["title"])
-        self.detail_artist.setText(song.get("artist") or "未知歌手")
-        self.lyrics_browser.setHtml(
-            '<div style="font-size:16px;">'
-            + highlighted_lyrics_html(song["lyrics"], song["vocab"])
-            + "</div>"
+        language_label = {"ja": "日语", "zh": "中文", "en": "英语", "ko": "韩语"}.get(
+            song.get("language", "zh"), song.get("language", "zh")
         )
-        self.word_title.setText("点击高亮词查看详情")
+        artist = song.get("artist") or "未知歌手"
+        self.detail_artist.setText(f"{artist} · {language_label}")
+        self._render_current_lyrics()
+        self._selected_lyric_text = ""
+        self._selected_lyric_block_text = ""
+        self._selected_lyric_offset = 0
+        self.word_title.setText("点击加粗词查看详情")
         self.word_reading.setText("")
         self.word_meaning.setText("")
         self.word_note.setText("")
         self.stack.setCurrentWidget(self.detail_page)
 
+    def _theme_colors(self):
+        theme = getattr(self.context.parent, "theme", None)
+        return getattr(theme, "colors", None)
+
+    def _refresh_current_lyrics(self):
+        if self.current_song is not None:
+            self._render_current_lyrics()
+
+    def _render_current_lyrics(self):
+        if self.current_song is None:
+            return
+        song = self.current_song
+        points = self.split_points.get(song["id"], {})
+        self.lyrics_browser.setHtml(
+            '<div style="font-size:16px;">'
+            + highlighted_lyrics_html(
+                song["lyrics"], song["vocab"], song.get("language", "zh"),
+                split_points=points, colors=self._theme_colors(),
+            )
+            + "</div>"
+        )
+
     def _show_library(self):
         self.current_song = None
         self.stack.setCurrentWidget(self.library_page)
+
+    def _remember_lyric_selection(self):
+        cursor = self.lyrics_browser.textCursor()
+        selected = cursor.selectedText().replace("\u2029", "").strip()
+        self._selected_lyric_text = selected
+        self._selected_lyric_block_text = cursor.block().text().strip()
+        self._selected_lyric_offset = max(0, cursor.selectionStart() - cursor.block().position())
+
+    def _selected_line_and_position(self):
+        if self.current_song is None or not self._selected_lyric_text:
+            return None, None
+        selected = self._selected_lyric_text
+        block_text = self._selected_lyric_block_text
+        normalized_block_text = block_text.replace("│", "")
+        candidates = []
+        for line in self.current_song.get("lyrics", []):
+            text = str(line.get("text", ""))
+            if block_text and block_text != text and normalized_block_text != text:
+                continue
+            search_offset = self._selected_lyric_offset
+            if normalized_block_text == text:
+                points = self.split_points.get(self.current_song["id"], {}).get(line["id"], [])
+                search_offset = max(
+                    0, search_offset - sum(1 for point in points if point <= search_offset)
+                )
+            start = text.find(selected, search_offset)
+            if start < 0 and search_offset:
+                start = text.find(selected)
+            if start >= 0:
+                candidates.append((line, start + len(selected)))
+        if not candidates:
+            for line in self.current_song.get("lyrics", []):
+                text = str(line.get("text", ""))
+                start = text.find(selected)
+                if start >= 0:
+                    candidates.append((line, start + len(selected)))
+        if len(candidates) != 1:
+            return None, None
+        return candidates[0]
+
+    def _split_selected_line(self):
+        line, split_at = self._selected_line_and_position()
+        if line is None:
+            self.library_status.setText("请先在一条歌词中选中要添加分割点的单词。")
+            return
+        if split_at <= 0 or split_at >= len(line["text"]):
+            self.library_status.setText("分割位置不能位于歌词开头或结尾。")
+            return
+        song_points = self.split_points.setdefault(self.current_song["id"], {})
+        positions = song_points.setdefault(line["id"], [])
+        if split_at not in positions:
+            positions.append(split_at)
+            positions.sort()
+            self._save_splits()
+        self._open_song(self.current_song["id"])
+
+    def _clear_selected_line_split(self):
+        line, _ = self._selected_line_and_position()
+        if line is None:
+            self.library_status.setText("请先在一条歌词中选中要清除分割的单词。")
+            return
+        song_points = self.split_points.get(self.current_song["id"], {})
+        if line["id"] not in song_points:
+            return
+        song_points.pop(line["id"], None)
+        if not song_points:
+            self.split_points.pop(self.current_song["id"], None)
+        self._save_splits()
+        self._open_song(self.current_song["id"])
 
     def _show_word(self, url: QUrl):
         value = url.toString()
@@ -489,7 +814,8 @@ class LyricsModule(FeatureModule):
         layout = QVBoxLayout(dialog)
         hint = QLabel(
             "复制下面的模板，填写歌曲信息、逐行歌词和生词后保存为 .json 文件，"
-            "再点击“导入歌曲 JSON”。"
+            "再点击“导入歌曲 JSON”。song.language 使用语言代码（例如 zh、ja、en 或 ko）；"
+            "日语歌曲每行需要填写 romaji、text 和 translation。"
         )
         hint.setObjectName("cardHint")
         hint.setWordWrap(True)

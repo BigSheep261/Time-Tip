@@ -50,6 +50,47 @@ class LyricsDomainTests(unittest.TestCase):
         self.assertIn("A+B", html)
         self.assertNotIn("<script>", html)
 
+    def test_japanese_payload_has_three_lyric_fields_and_split_marker(self):
+        payload = {
+            "version": 1,
+            "song": {"id": "song-ja", "title": "夜", "language": "ja"},
+            "lyrics": [{
+                "id": "line-1", "romaji": "yoake", "text": "夜明けの歌",
+                "translation": "黎明之歌",
+            }],
+            "vocab": [{"id": "word-1", "surface": "夜明け", "meaning": "黎明"}],
+        }
+        result = validate_song_payload(payload)
+        line = result["lyrics"][0]
+        self.assertEqual(result["language"], "ja")
+        self.assertEqual((line["romaji"], line["text"], line["translation"]),
+                         ("yoake", "夜明けの歌", "黎明之歌"))
+        self.assertNotIn("split_at", line)
+        rendered = highlighted_lyrics_html(
+            result["lyrics"], result["vocab"], result["language"],
+            split_points={"line-1": [2, 3]},
+        )
+        self.assertIn("yoake", rendered)
+        self.assertIn("黎明之歌", rendered)
+        self.assertIn("<strong>", rendered)
+        self.assertEqual(rendered.count("lyricsSplit"), 2)
+
+    def test_theme_colors_are_applied_to_japanese_rows(self):
+        lyrics = [{
+            "id": "line", "romaji": "yoake", "text": "夜明け", "translation": "黎明"
+        }]
+        vocab = [{"id": "word", "surface": "夜明け", "meaning": "黎明"}]
+        light = highlighted_lyrics_html(
+            lyrics, vocab, "ja", colors={"text": "#111111", "muted": "#222222", "primary": "#333333"}
+        )
+        dark = highlighted_lyrics_html(
+            lyrics, vocab, "ja", colors={"text": "#EEEEEE", "muted": "#AAAAAA", "primary": "#B4A7FF"}
+        )
+        self.assertIn("#111111", light)
+        self.assertIn("#EEEEEE", dark)
+        self.assertIn('style="color:#EEEEEE;', dark)
+        self.assertNotEqual(light, dark)
+
 
 class LyricsModuleTests(unittest.TestCase):
     @classmethod
@@ -107,6 +148,44 @@ class LyricsModuleTests(unittest.TestCase):
         self.assertEqual(instance.songs, [])
         self.assertTrue(self.host.modules.disable("lyrics"))
         self.assertIsNone(self.host.modules.entries["lyrics"].instance)
+
+    def test_split_points_are_local_and_support_multiple_positions(self):
+        self.store.write_json("lyrics_songs", [{
+            "id": "song-1",
+            "title": "夜",
+            "lyrics": [{"id": "line-1", "text": "夜明けの歌"}],
+            "vocab": [],
+        }])
+        self.host.modules.register(ModuleSpec("lyrics", "歌词学习", LyricsModule))
+        self.assertTrue(self.host.modules.enable("lyrics"))
+        instance = self.host.modules.entries["lyrics"].instance
+        instance._open_song("song-1")
+
+        instance._selected_lyric_text = "夜明け"
+        instance._selected_lyric_block_text = "夜明けの歌"
+        instance._selected_lyric_offset = 0
+        instance._split_selected_line()
+        instance._selected_lyric_text = "明"
+        instance._selected_lyric_offset = 1
+        instance._split_selected_line()
+
+        self.assertEqual(instance.split_points, {"song-1": {"line-1": [2, 3]}})
+        self.assertNotIn("split_at", instance.songs[0]["lyrics"][0])
+        self.assertEqual(
+            self.store.read_json("lyrics_splits", []),
+            [{"song_id": "song-1", "line_id": "line-1", "positions": [2, 3]}],
+        )
+        backup = Path(self.temp.name) / "split-backup.json"
+        self.store.export_data(str(backup))
+        restored = Store(str(Path(self.temp.name) / "split-restored.ini"))
+        try:
+            restored.import_data(str(backup))
+            self.assertEqual(
+                restored.read_json("lyrics_splits", []),
+                [{"song_id": "song-1", "line_id": "line-1", "positions": [2, 3]}],
+            )
+        finally:
+            restored.close()
 
 
 if __name__ == "__main__":

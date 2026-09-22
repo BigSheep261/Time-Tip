@@ -21,6 +21,7 @@ COLLECTION_KEYS = (
     "reminders",
     "anime",
     "lyrics_songs",
+    "lyrics_splits",
     "anime_groups",
     "emojis",
     "emoji_categories",
