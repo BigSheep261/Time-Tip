@@ -179,6 +179,16 @@ QDateTimeEdit:focus, QTimeEdit:focus, QLineEdit:focus, QSpinBox:focus, QDoubleSp
 #episodeName {{ color: {text}; }}
 #animeCardTitle {{ font-size: 16px; font-weight: 700; color: {text}; }}
 #animeCardMeta {{ color: {muted}; font-size: 12px; }}
+#lyricsCard {{ background: {input}; border: 1px solid {card_border}; border-radius: 15px; }}
+#lyricsCard:hover {{ background: {card_hover}; border-color: {accent_hover}; }}
+#lyricsCardTitle {{ font-size: 17px; font-weight: 700; color: {text}; }}
+#lyricsCardMeta, #lyricsCardHint {{ color: {muted}; font-size: 12px; }}
+#lyricsCardHint {{ color: {primary}; }}
+#lyricsTextCard {{ background: {surface}; border: 1px solid {border}; border-radius: 17px; }}
+#lyricsTextCard QTextBrowser {{ background: transparent; border: none; padding: 5px; }}
+#lyricsWordPanel {{ background: {accent_subtle}; border: 1px solid {accent_hover}; border-radius: 14px; }}
+#lyricsWordTitle {{ font-size: 18px; font-weight: 700; color: {primary}; }}
+#lyricsWordReading {{ color: {muted}; font-size: 13px; }}
 #tarotSpreadButton {{ background: {input}; color: {text}; border: 1px solid {card_border}; border-radius: 11px; padding: 8px 12px; text-align: left; font-weight: 700; }}
 #tarotSpreadButton:hover {{ background: {card_hover}; border-color: {accent_hover}; }}
 #tarotSpreadButton:pressed {{ background: {accent_soft}; }}

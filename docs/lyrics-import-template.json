@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "song": {
+    "id": "yoru-no-uta",
+    "title": "夜の歌",
+    "artist": "歌手名",
+    "cover": ""
+  },
+  "lyrics": [
+    {
+      "id": "line-001",
+      "text": "ここに第一行の歌词"
+    },
+    {
+      "id": "line-002",
+      "text": "ここに第二行の歌词"
+    }
+  ],
+  "vocab": [
+    {
+      "id": "word-001",
+      "surface": "歌词",
+      "reading": "かし",
+      "meaning": "歌词；歌曲中的文字",
+      "note": "可选的补充说明"
+    }
+  ]
+}

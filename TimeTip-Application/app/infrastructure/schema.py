@@ -20,6 +20,7 @@ COLLECTION_KEYS = (
     "memos",
     "reminders",
     "anime",
+    "lyrics_songs",
     "anime_groups",
     "emojis",
     "emoji_categories",
