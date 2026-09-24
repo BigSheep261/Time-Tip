@@ -184,6 +184,12 @@ QDateTimeEdit:focus, QTimeEdit:focus, QLineEdit:focus, QSpinBox:focus, QDoubleSp
 #lyricsCardTitle {{ font-size: 17px; font-weight: 700; color: {text}; }}
 #lyricsCardMeta, #lyricsCardHint {{ color: {muted}; font-size: 12px; }}
 #lyricsCardHint {{ color: {primary}; }}
+#lyricsDeleteButton {{ background: {danger_bg}; color: {danger}; border: none; border-radius: 9px; padding: 7px 12px; font-weight: 700; }}
+#lyricsDeleteButton:hover {{ background: {danger_hover}; }}
+#lyricsDeleteButton:focus {{ border: 1px solid {focus_ring}; }}
+#lyricsLanguageTabs::tab {{ background: {secondary}; color: {secondary_text}; border: none; border-radius: 8px; padding: 9px 16px; margin-right: 8px; }}
+#lyricsLanguageTabs::tab:selected {{ background: {accent_soft}; color: {primary}; font-weight: 700; }}
+#lyricsLanguageTabs::tab:hover {{ background: {secondary_hover}; }}
 #lyricsTextCard {{ background: {surface}; border: 1px solid {border}; border-radius: 17px; }}
 #lyricsTextCard QTextBrowser {{ background: transparent; border: none; padding: 5px; }}
 #lyricsWordPanel {{ background: {accent_subtle}; border: 1px solid {accent_hover}; border-radius: 14px; }}

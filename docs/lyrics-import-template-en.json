@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "song": {
+    "id": "morning-light",
+    "title": "Morning Light",
+    "artist": "歌手名",
+    "cover": "",
+    "language": "en"
+  },
+  "lyrics": [
+    {
+      "id": "line-001",
+      "text": "Morning light comes through my window.",
+      "translation": "晨光透过我的窗户。"
+    },
+    {
+      "id": "line-002",
+      "text": "I welcome a new day.",
+      "translation": "我迎接新的一天。"
+    }
+  ],
+  "vocab": [
+    {
+      "id": "word-001",
+      "surface": "window",
+      "reading": "/ˈwɪndəʊ/",
+      "meaning": "窗户",
+      "note": "可选的补充说明"
+    }
+  ]
+}
