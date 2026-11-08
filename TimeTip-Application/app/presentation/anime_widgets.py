@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QFrame, QGr
 
 from app.domain.anime import LOCAL_CATEGORIES, anime_days_text, normalize_tags
 from app.domain.anime_organization import group_name
+from app.infrastructure.anime_files import VIDEO_EXTENSIONS
 from app.presentation.anime_dialog import DEFAULT_ANIME_COVER
 from app.presentation.anime_organization import AnimeDragHandle
 
@@ -97,10 +98,15 @@ class AnimeCard(QFrame):
         actions.setSpacing(6)
         actions.addStretch()
         self.edit_button = QPushButton("编辑", objectName="animeEditButton")
+        self.upload_button = QPushButton("上传", objectName="animeUploadButton")
+        self.upload_button.setFixedWidth(58)
+        self.upload_button.setEnabled(bool(item.get("folder")))
+        self.upload_button.setToolTip("手动将视频移入番剧目录" if item.get("folder") else "请先在编辑中设置本地文件夹")
         self.delete_button = QPushButton("删除", objectName="animeDeleteButton")
         self.edit_button.setFixedWidth(58)
         self.delete_button.setFixedWidth(58)
         actions.addWidget(self.edit_button)
+        actions.addWidget(self.upload_button)
         actions.addWidget(self.delete_button)
         actions.addStretch()
         layout.addWidget(self.actions_host)
@@ -294,7 +300,7 @@ class AnimeFolderDialog(QDialog):
 
     progressSaved = pyqtSignal(int)
 
-    VIDEO_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".ts"}
+    VIDEO_EXTENSIONS = VIDEO_EXTENSIONS
 
     def __init__(self, item: dict, parent: QWidget | None = None) -> None:
         super().__init__(parent)

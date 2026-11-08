@@ -274,6 +274,29 @@ class WindowModulesTests(QtCase):
         self.host.tray.hide()
         super().tearDown()
 
+    def test_anime_card_opens_upload_for_its_folder_and_guards_module_stop(self):
+        folder = Path(self.temporary.name) / "anime"
+        folder.mkdir()
+        self.host.anime = [{"id": "upload", "title": "Upload Anime", "folder": str(folder)}]
+        self.host._refresh_anime_list()
+
+        def inspect_dialog(dialog):
+            dialog.show()
+            self.assertEqual(dialog.folder, folder)
+            self.assertTrue(dialog.isModal())
+            self.assertFalse(self.host.modules.entries["anime"].instance.can_stop())
+            dialog.reject()
+            return 0
+
+        with patch("app.presentation.anime_page.AnimeUploadDialog.exec", inspect_dialog):
+            self.host.upload_anime_videos("upload")
+        with patch.object(self.host, "upload_anime_videos") as upload:
+            card = self.host.anime_list.itemWidget(self.host.anime_list.item(0))
+            card.upload_button.click()
+            upload.assert_called_once_with("upload")
+        self.assertIsNone(self.host._anime_upload_dialog)
+        self.assertTrue(self.host.modules.entries["anime"].instance.can_stop())
+
     def test_calendar_disabled_stops_notifications_and_reenable_catches_up_once(self):
         now = datetime.now()
         yesterday = (now - timedelta(days=1)).date().isoformat()

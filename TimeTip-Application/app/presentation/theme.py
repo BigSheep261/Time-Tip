@@ -163,8 +163,8 @@ QDateTimeEdit:focus, QTimeEdit:focus, QLineEdit:focus, QSpinBox:focus, QDoubleSp
 #animeCard {{ background: {input}; border: 1px solid {card_border}; border-radius: 13px; }}
 #animeCard:hover {{ background: {card_hover}; border: 1px solid {accent_hover}; }}
 #animeCardActions {{ background: transparent; }}
-#animeEditButton {{ background: {accent_soft}; color: {primary}; border: none; border-radius: 9px; padding: 7px 10px; font-weight: 700; }}
-#animeEditButton:hover {{ background: {accent_hover}; }}
+#animeEditButton, #animeUploadButton {{ background: {accent_soft}; color: {primary}; border: none; border-radius: 9px; padding: 7px 10px; font-weight: 700; }}
+#animeEditButton:hover, #animeUploadButton:hover {{ background: {accent_hover}; }}
 #animeDeleteButton {{ background: {danger_bg}; color: {danger}; border: none; border-radius: 9px; padding: 7px 10px; font-weight: 700; }}
 #animeDeleteButton:hover {{ background: {danger_hover}; }}
 #animeStepButton {{ background: {accent_subtle}; color: {primary}; border: none; border-radius: 10px; font-size: 20px; font-weight: 700; }}
@@ -221,6 +221,7 @@ QDateTimeEdit:focus, QTimeEdit:focus, QLineEdit:focus, QSpinBox:focus, QDoubleSp
 #animeDialogTitle {{ font-size: 22px; font-weight: 750; color: {text}; }}
 #animeDialogHint {{ color: {muted}; font-size: 12px; }}
 #animeDialogCard {{ background: {surface}; border: 1px solid {border}; border-radius: 17px; }}
+#animeUploadDropArea {{ background: {accent_subtle}; border: 2px dashed {accent_hover}; border-radius: 14px; padding: 12px; }}
 #animeDialogCover {{ background: {accent_soft}; border: 1px solid {accent_hover}; border-radius: 13px; }}
 #animeDialogError {{ color: {danger}; background: {danger_bg}; border: 1px solid {danger_border}; border-radius: 9px; padding: 8px 11px; }}
 #focusTime {{ font-size: 82px; font-weight: 750; color: {primary}; padding: 16px; }}

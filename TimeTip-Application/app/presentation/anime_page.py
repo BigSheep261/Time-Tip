@@ -13,6 +13,7 @@ from app.presentation.anime_organization import AnimeGroupsDialog, AnimeListWidg
 
 
 from app.presentation.anime_widgets import AnimeCard, AnimeFolderDialog
+from app.presentation.anime_upload import AnimeUploadDialog
 
 class AnimePageMixin:
     def _anime_page(self):
@@ -97,6 +98,7 @@ class AnimePageMixin:
             card.drag_handle.setVisible(manual)
             card.setToolTip("拖动调整顺序；双击查看详情" if manual else "双击查看详情；切换手动排序后可拖动")
             card.edit_button.clicked.connect(lambda _checked=False, anime_id=item["id"]: self.edit_anime(anime_id))
+            card.upload_button.clicked.connect(lambda _checked=False, anime_id=item["id"]: self.upload_anime_videos(anime_id))
             card.delete_button.clicked.connect(lambda _checked=False, anime_id=item["id"]: self.delete_anime_id(anime_id))
             card.opened.connect(lambda anime_id=item["id"]: self.open_anime_details(anime_id))
             row = QListWidgetItem(); row.setData(Qt.ItemDataRole.UserRole, item["id"]); row.setToolTip(item.get("folder", "")); row.setSizeHint(card.sizeHint()); self.anime_list.addItem(row); self.anime_list.setItemWidget(row, card)
@@ -197,6 +199,21 @@ class AnimePageMixin:
         dialog = AnimeFolderDialog(item, self)
         dialog.progressSaved.connect(lambda value, anime_id=anime_id: self._save_anime_progress(anime_id, value))
         dialog.exec()
+
+    def upload_anime_videos(self, anime_id):
+        item = next((a for a in self.anime if a["id"] == anime_id), None)
+        if not item or not item.get("folder"):
+            self.anime_feedback.setText("请先编辑番剧并设置本地文件夹，再上传视频。")
+            return
+        dialog = AnimeUploadDialog(item, self)
+        self._anime_upload_dialog = dialog
+        try:
+            dialog.exec()
+            if dialog.moved_count:
+                self.anime_feedback.setText(f"已将 {dialog.moved_count} 个视频移入“{item.get('title', '')}”的本地文件夹。")
+        finally:
+            self._anime_upload_dialog = None
+            dialog.deleteLater()
 
     def _save_anime_progress(self, anime_id, progress):
         item = next((a for a in self.anime if a["id"] == anime_id), None)

@@ -26,8 +26,10 @@ class BuiltinPageModule(FeatureModule):
             return not self.host._jm_workers and not any(
                 task["state"] in {"排队中", "下载中"} for task in self.host.jm_queue)
         if key == "anime":
-            dialog = getattr(self.host, "_anime_dialog", None)
-            return dialog is None or not dialog.isVisible()
+            dialogs = (getattr(self.host, "_anime_dialog", None),
+                       getattr(self.host, "_anime_upload_dialog", None))
+            return all(dialog is None or (not dialog.isVisible() and not getattr(dialog, "busy", False))
+                       for dialog in dialogs)
         return True
 
     def stop(self):
