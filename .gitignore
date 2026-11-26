@@ -8,7 +8,7 @@ __pycache__/
 .venv/
 venv/
 
-TimeTip-Application/build/
+TimeTip-Application/build/work/
 TimeTip-Application/dist/
 TimeTip-Application/*.exe
 TimeTip-Application/*.log

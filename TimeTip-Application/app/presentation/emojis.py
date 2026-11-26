@@ -1,18 +1,20 @@
 """Emoji/sticker library page and local category management."""
 from __future__ import annotations
 
+import sqlite3
 import uuid
 import zipfile
 from collections import defaultdict
 from pathlib import Path
 
-from PyQt6.QtCore import QBuffer, QIODevice, Qt
+from PyQt6.QtCore import QBuffer, QIODevice, QSaveFile, Qt
 from PyQt6.QtGui import QImageReader
 from PyQt6.QtWidgets import (
-    QFileDialog, QHBoxLayout, QInputDialog, QLabel, QListWidget,
-    QListWidgetItem, QMessageBox, QPushButton, QVBoxLayout, QWidget,
+    QComboBox, QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QInputDialog,
+    QLabel, QListWidgetItem, QMessageBox, QPushButton, QVBoxLayout, QWidget,
 )
 
+from app.presentation.emoji_category_list import EmojiCategoryList
 from app.presentation.emoji_grid import EmojiGrid
 from app.presentation.widgets import Card
 from app.infrastructure.emoji_transfer import export_emoji_package, read_emoji_package
@@ -112,9 +114,11 @@ class EmojiPageMixin:
         side.setMaximumWidth(210)
         side_layout = QVBoxLayout(side)
         side_layout.addWidget(QLabel("分类文件夹", objectName="fieldLabel"))
-        self.emoji_category_list = QListWidget(objectName="cleanList")
+        self.emoji_category_list = EmojiCategoryList()
         self.emoji_category_list.setAccessibleName("表情包分类文件夹")
+        self.emoji_category_list.setToolTip("按住分类 5 秒后可上下拖动排序")
         self.emoji_category_list.currentItemChanged.connect(self._emoji_category_changed)
+        self.emoji_category_list.reordered.connect(self._save_emoji_category_order)
         side_layout.addWidget(self.emoji_category_list, 1)
         category_buttons = QHBoxLayout()
         self.rename_emoji_category_button = QPushButton("重命名", objectName="secondaryButton")
@@ -136,7 +140,15 @@ class EmojiPageMixin:
         self.emoji_grid.itemSelectionChanged.connect(self._update_emoji_actions)
         card_layout.addWidget(self.emoji_grid, 1)
         footer = QHBoxLayout()
-        footer.addWidget(QLabel("拖入图片添加；选中图片后可拖出到聊天窗口。", objectName="cardHint"), 1)
+        hint = QLabel("拖入添加，选中后可拖出。", objectName="cardHint")
+        hint.setWordWrap(True)
+        footer.addWidget(hint, 1)
+        self.move_emoji_button = QPushButton("移动所选", objectName="secondaryButton")
+        self.move_emoji_button.clicked.connect(lambda: self._choose_emoji_transfer(move=True))
+        footer.addWidget(self.move_emoji_button)
+        self.copy_emoji_button = QPushButton("复制所选", objectName="secondaryButton")
+        self.copy_emoji_button.clicked.connect(lambda: self._choose_emoji_transfer(move=False))
+        footer.addWidget(self.copy_emoji_button)
         self.delete_emoji_button = QPushButton("删除所选", objectName="secondaryButton")
         self.delete_emoji_button.clicked.connect(self._delete_selected_emojis)
         footer.addWidget(self.delete_emoji_button)
@@ -176,6 +188,20 @@ class EmojiPageMixin:
         is_default = self.active_emoji_category == "default"
         self.rename_emoji_category_button.setEnabled(not is_default)
         self.delete_emoji_category_button.setEnabled(not is_default)
+
+    def _save_emoji_category_order(self, ordered_ids):
+        categories = {category["id"]: category for category in self.emoji_categories}
+        if len(ordered_ids) != len(categories) or set(ordered_ids) != categories.keys():
+            self._refresh_emoji_categories(self.active_emoji_category)
+            return
+        reordered = [categories[category_id] for category_id in ordered_ids]
+        try:
+            self.store.write_json("emoji_categories", reordered)
+        except (OSError, sqlite3.Error) as error:
+            self._refresh_emoji_categories(self.active_emoji_category)
+            self._show_emoji_feedback(f"保存分类顺序失败：{error}")
+            return
+        self.emoji_categories = reordered
 
     def _refresh_emoji_grid(self):
         self.emoji_grid.clear_images()
@@ -252,7 +278,121 @@ class EmojiPageMixin:
         return record_id, None
 
     def _update_emoji_actions(self):
-        self.delete_emoji_button.setEnabled(bool(self.emoji_grid.selectedItems()))
+        has_selection = bool(self.emoji_grid.selectedItems())
+        can_transfer = has_selection and len(self.emoji_categories) > 1
+        self.move_emoji_button.setEnabled(can_transfer)
+        self.copy_emoji_button.setEnabled(can_transfer)
+        self.delete_emoji_button.setEnabled(has_selection)
+
+    def _choose_emoji_transfer(self, *, move):
+        selected = {item.data(Qt.ItemDataRole.UserRole)["id"] for item in self.emoji_grid.selectedItems()}
+        source_id = self.active_emoji_category
+        if not selected or len(self.emoji_categories) < 2:
+            return
+
+        action = "移动" if move else "复制"
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"{action}所选图片")
+        layout = QVBoxLayout(dialog)
+        label = QLabel(f"将 {len(selected)} 张图片{action}到")
+        layout.addWidget(label)
+        destinations = QComboBox()
+        for category in self.emoji_categories:
+            if category["id"] != source_id:
+                destinations.addItem(category["name"], category["id"])
+        label.setBuddy(destinations)
+        layout.addWidget(destinations)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(action)
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._transfer_emojis(selected, source_id, destinations.currentData(), move=move)
+
+    def _transfer_emojis(self, selected, source_id, target_id, *, move):
+        if source_id == target_id or not any(category["id"] == target_id for category in self.emoji_categories):
+            return
+        root = self.emoji_root.resolve()
+        target_root = (root / target_id).resolve()
+        if root not in target_root.parents:
+            self._show_emoji_feedback("目标分类的存储路径无效。")
+            return
+
+        action = "移动" if move else "复制"
+        fingerprints = self._category_fingerprint_index(target_id)
+        transferred = []
+        copied_paths = []
+        moved_sources = {}
+        duplicates = 0
+        failed = 0
+        for index, record in enumerate(self.emojis):
+            if record["id"] not in selected or record["category_id"] != source_id:
+                continue
+            try:
+                source = (root / record["path"]).resolve()
+                if not source.is_relative_to(root):
+                    raise OSError("Invalid emoji path")
+                data = source.read_bytes()
+                fingerprint = emoji_fingerprint(data)
+                if not fingerprint:
+                    raise OSError("Invalid emoji image")
+                if fingerprint in fingerprints:
+                    duplicates += 1
+                    continue
+                file_id = uuid.uuid4().hex
+                destination = target_root / (file_id + source.suffix.lower())
+                target_root.mkdir(parents=True, exist_ok=True)
+                output = QSaveFile(str(destination))
+                if not output.open(QIODevice.OpenModeFlag.WriteOnly):
+                    raise OSError(output.errorString())
+                if output.write(data) != len(data):
+                    output.cancelWriting()
+                    raise OSError(output.errorString())
+                if not output.commit():
+                    raise OSError(output.errorString())
+            except OSError:
+                failed += 1
+                continue
+
+            new_id = record["id"] if move else file_id
+            transferred.append({"id": new_id, "path": destination.relative_to(root).as_posix(),
+                                "category_id": target_id})
+            fingerprints[fingerprint] = new_id
+            copied_paths.append(destination)
+            if move:
+                moved_sources[index] = source
+
+        if transferred:
+            remaining = [record for index, record in enumerate(self.emojis) if index not in moved_sources]
+            updated = remaining + transferred
+            try:
+                self.store.write_json("emojis", updated)
+            except (OSError, sqlite3.Error) as error:
+                self._remove_emoji_files(copied_paths)
+                self._show_emoji_feedback(f"{action}失败：{error}")
+                return
+            self.emojis = updated
+            if moved_sources:
+                retained_paths = {(root / record["path"]).resolve() for record in remaining}
+                self._remove_emoji_files(set(moved_sources.values()) - retained_paths)
+            self._refresh_duplicate_ids()
+            self._refresh_emoji_categories(self.active_emoji_category)
+
+        feedback = [f"已{action} {len(transferred)} 张图片到“{self._category_by_id(target_id)['name']}”"]
+        if duplicates:
+            feedback.append(f"{duplicates} 张在目标分类已有相同图片，已跳过")
+        if failed:
+            feedback.append(f"{failed} 张因文件无法读取或写入而未处理")
+        self._show_emoji_feedback("，".join(feedback) + "。")
+
+    def _remove_emoji_files(self, paths):
+        for path in paths:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def _toggle_emoji_reordering(self, enabled: bool):
         self.emoji_grid.set_reordering(enabled)

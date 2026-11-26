@@ -1,0 +1,10 @@
+name: timetip
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - "PyQt6>=6.7,<7"
+      - "jmcomic>=2.7.0"
+      - "PyMuPDF>=1.23,<2"
+      - "pyzipper>=0.3.6"
+      - "PyInstaller>=6.21,<7"
